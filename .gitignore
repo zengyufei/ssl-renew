@@ -1,0 +1,41 @@
+target/
+node_modules/
+dist/
+dist-tauri/
+
+# Runtime files
+profiles.yaml
+logs/
+state/
+work/
+ssl-renew-gui/src-tauri/logs/
+ssl-renew-gui/src-tauri/state/
+ssl-renew-gui/src-tauri/work/
+
+# Secrets and certificates
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*secrets*.yaml
+*secrets*.yml
+signer-secrets.yaml
+
+# Release artifacts
+*.zip
+*.rar
+*.7z
+release/
+package/
+
+# Editor and OS files
+.idea/
+.vscode/
+*.swp
+*.tmp
+Thumbs.db
+.DS_Store

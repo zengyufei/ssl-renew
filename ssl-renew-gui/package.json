@@ -1,0 +1,28 @@
+{
+  "name": "ssl-renew-gui",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "tauri": "tauri dev",
+    "tauri:cli": "tauri",
+    "tauri:exe": "npm run build && cargo build --release -p ssl-renew-gui --bin SSL证书自动续期",
+    "tauri:exe:upx": "tauri build --no-bundle && powershell -ExecutionPolicy Bypass -File ..\\build-release-upx.ps1 -SkipBuild"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.3",
+    "@types/react": "18.2.79",
+    "@types/react-dom": "18.2.25",
+    "@vitejs/plugin-react": "4.2.1",
+    "typescript": "5.4.5",
+    "vite": "4.5.3"
+  }
+}

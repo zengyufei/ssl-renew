@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build Windows release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ssl-renew-gui/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ssl-renew-gui
+        run: npm ci
+
+      - name: Test Rust core packages
+        run: cargo test -p ssl-core -p ssl-renew-cli -p ssl-signer-agent
+
+      - name: Build frontend
+        working-directory: ssl-renew-gui
+        run: npm run build
+
+      - name: Build release zip
+        shell: pwsh
+        run: .\build-release-upx.ps1
+
+      - name: Find release zip
+        id: package
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem -Path target\release -Filter "SSL证书自动续期-v*-windows-x64.zip" | Select-Object -First 1
+          if (!$zip) { throw "Release zip not found" }
+          "zip=$($zip.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.zip }}

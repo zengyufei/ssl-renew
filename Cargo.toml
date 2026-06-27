@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "ssl-core",
+    "ssl-renew-cli",
+    "ssl-signer-agent",
+    "ssl-renew-gui/src-tauri",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

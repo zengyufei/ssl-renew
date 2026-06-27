@@ -1,0 +1,27 @@
+[package]
+name = "ssl-renew-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "ssl_renew_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "SSL证书自动续期"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+rfd = "0.15"
+ssl-core = { path = "../../ssl-core" }
+tauri = { version = "2.11.3", features = [] }
+tokio = { version = "1", features = ["sync", "time"] }
