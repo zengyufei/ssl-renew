@@ -45,18 +45,38 @@ function Compress-Exe([string]$Path) {
     if (!$NoLzma) {
         $Args += "--lzma"
     }
-    $Args += $Path
 
-    $Output = & $Upx @Args 2>&1
-    $Code = $LASTEXITCODE
-    $Output | ForEach-Object { Write-Host $_ }
-    if ($Code -ne 0) {
-        $Text = ($Output | Out-String)
-        if ($Text -match "AlreadyPacked|AlreadyPackedException") {
-            Write-Host "文件已被 UPX 压缩，跳过：$Path"
-            return
+    $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("ssl-renew-upx-" + [System.Guid]::NewGuid().ToString("N"))
+    $TempExe = Join-Path $TempDir "app.exe"
+
+    try {
+        New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+        Copy-Item -LiteralPath $Path -Destination $TempExe -Force
+
+        $Args += $TempExe
+        $PreviousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $Output = & $Upx @Args 2>&1
+            $Code = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $PreviousErrorActionPreference
         }
-        throw "UPX 压缩失败：$Path"
+        $Output | ForEach-Object { Write-Host $_ }
+        if ($Code -ne 0) {
+            $Text = ($Output | Out-String)
+            if ($Text -match "AlreadyPacked|AlreadyPackedException") {
+                Write-Host "文件已被 UPX 压缩，跳过：$Path"
+                return
+            }
+            throw "UPX 压缩失败：$Path"
+        }
+
+        Copy-Item -LiteralPath $TempExe -Destination $Path -Force
+    } finally {
+        if (Test-Path $TempDir) {
+            Remove-Item -LiteralPath $TempDir -Recurse -Force
+        }
     }
 
     $After = (Get-Item $Path).Length
