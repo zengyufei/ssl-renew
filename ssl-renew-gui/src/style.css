@@ -362,6 +362,38 @@ main {
   line-height: 1.55;
 }
 
+.env-status {
+  grid-column: 2;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #d9e2ec;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.env-status > strong {
+  font-size: 13px;
+  color: #334155;
+}
+
+.env-status-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(130px, 1.4fr) auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.env-status-row .ok {
+  color: #15803d;
+}
+
+.env-status-row .missing,
+.env-status-error {
+  color: #b42318;
+}
+
 .form label, .dialog-form label, .frequency-box label {
   color: #475569;
 }
@@ -522,8 +554,27 @@ input:focus, select:focus {
   text-align: left;
 }
 
+.group-add-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .vendor-panel {
   min-width: 0;
+}
+
+.group-name-row {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.group-name-row label {
+  color: #475569;
+  font-size: 13px;
 }
 
 .env-list {

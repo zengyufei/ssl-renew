@@ -22,7 +22,9 @@ pub fn profiles_path() -> PathBuf {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Store {
     pub current_domain: String,
-    #[serde(default = "default_vendor_configs")]
+    #[serde(default = "default_env_groups")]
+    pub env_groups: BTreeMap<String, EnvironmentGroup>,
+    #[serde(default, skip_serializing)]
     pub vendor_configs: BTreeMap<String, Vec<VendorEnvEntry>>,
     #[serde(default)]
     pub profiles: BTreeMap<String, Profile>,
@@ -36,6 +38,34 @@ pub struct Store {
 pub struct VendorEnvEntry {
     pub alias: String,
     pub key: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EnvironmentGroup {
+    pub name: String,
+    #[serde(default)]
+    pub entries: Vec<EnvGroupEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EnvGroupEntry {
+    pub alias: String,
+    #[serde(alias = "key")]
+    pub env_name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct EnvironmentGroupStatus {
+    pub group_id: String,
+    pub group_name: String,
+    pub variables: Vec<EnvironmentVariableStatus>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct EnvironmentVariableStatus {
+    pub alias: String,
+    pub env_name: String,
+    pub is_set: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -82,6 +112,8 @@ pub struct PathsConfig {
 pub struct DnsConfig {
     #[serde(default = "default_dns_provider")]
     pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_group_id: Option<String>,
     #[serde(default = "default_propagation_timeout")]
     pub propagation_timeout_seconds: u64,
     #[serde(default = "default_propagation_interval")]
@@ -300,6 +332,7 @@ impl Default for DnsConfig {
     fn default() -> Self {
         Self {
             provider: default_dns_provider(),
+            env_group_id: None,
             propagation_timeout_seconds: default_propagation_timeout(),
             propagation_interval_seconds: default_propagation_interval(),
             resolvers: default_resolvers(),
@@ -384,7 +417,8 @@ pub fn load_store(path: impl AsRef<Path>) -> Result<Store> {
         profiles.insert(current.clone(), profile);
         let store = Store {
             current_domain: current,
-            vendor_configs: default_vendor_configs(),
+            env_groups: default_env_groups(),
+            vendor_configs: BTreeMap::new(),
             profiles,
             monitor: default_monitor_config(),
             app_settings: default_app_settings(),
@@ -402,6 +436,7 @@ pub fn load_store(path: impl AsRef<Path>) -> Result<Store> {
 
 pub fn save_store(path: impl AsRef<Path>, store: &Store) -> Result<()> {
     let path = path.as_ref();
+    validate_store(store)?;
     let text = serde_yaml::to_string(store)?;
     fs::write(path, text).with_context(|| format!("保存配置失败：{}", path.display()))
 }
@@ -426,8 +461,19 @@ pub fn normalize_store(store: &mut Store) {
             }
         }
     }
-    for (key, value) in default_vendor_configs() {
-        store.vendor_configs.entry(key).or_insert(value);
+    for (group_id, legacy_entries) in &store.vendor_configs {
+        let Some(group) = store.env_groups.get_mut(group_id) else {
+            continue;
+        };
+        if !legacy_entries.is_empty() {
+            group.entries = legacy_entries
+                .iter()
+                .map(|entry| EnvGroupEntry {
+                    alias: entry.alias.clone(),
+                    env_name: entry.key.clone(),
+                })
+                .collect();
+        }
     }
 }
 
@@ -446,6 +492,37 @@ pub fn default_profile(domain: &str) -> Profile {
         dns: Default::default(),
         nginx: Default::default(),
     }
+}
+
+pub fn default_env_groups() -> BTreeMap<String, EnvironmentGroup> {
+    BTreeMap::from([
+        (
+            "aliyun".to_string(),
+            EnvironmentGroup {
+                name: "阿里云".to_string(),
+                entries: vec![
+                    EnvGroupEntry {
+                        alias: "AccessKeyId".to_string(),
+                        env_name: "Ali_Key".to_string(),
+                    },
+                    EnvGroupEntry {
+                        alias: "AccessKeySecret".to_string(),
+                        env_name: "Ali_Secret".to_string(),
+                    },
+                ],
+            },
+        ),
+        (
+            "cloudflare".to_string(),
+            EnvironmentGroup {
+                name: "Cloudflare".to_string(),
+                entries: vec![EnvGroupEntry {
+                    alias: "API Token".to_string(),
+                    env_name: "CF_Token".to_string(),
+                }],
+            },
+        ),
+    ])
 }
 
 pub fn default_vendor_configs() -> BTreeMap<String, Vec<VendorEnvEntry>> {
@@ -472,6 +549,148 @@ pub fn default_vendor_configs() -> BTreeMap<String, Vec<VendorEnvEntry>> {
             }],
         ),
     ])
+}
+
+pub fn environment_group_status(
+    store: &Store,
+    profile: &Profile,
+) -> Result<Option<EnvironmentGroupStatus>> {
+    let Some(group_id) = profile
+        .dns
+        .env_group_id
+        .as_deref()
+        .filter(|group_id| !group_id.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let group = store.env_groups.get(group_id).ok_or_else(|| {
+        anyhow::anyhow!(
+            "域名 {} 引用了不存在的环境变量组：{}",
+            profile.domain,
+            group_id
+        )
+    })?;
+    Ok(Some(EnvironmentGroupStatus {
+        group_id: group_id.to_string(),
+        group_name: group.name.clone(),
+        variables: group
+            .entries
+            .iter()
+            .map(|entry| EnvironmentVariableStatus {
+                alias: entry.alias.clone(),
+                env_name: entry.env_name.clone(),
+                is_set: read_environment_variable(&entry.env_name).is_some(),
+            })
+            .collect(),
+    }))
+}
+
+pub fn resolve_profile_environment_group(store: &Store, profile: &Profile) -> Result<Profile> {
+    let Some(status) = environment_group_status(store, profile)? else {
+        return Ok(profile.clone());
+    };
+    let group = store
+        .env_groups
+        .get(&status.group_id)
+        .expect("environment group status must reference an existing group");
+    for variable in &status.variables {
+        if !variable.is_set {
+            return Err(anyhow::anyhow!(
+                "环境变量组“{}”缺少环境变量 {}（别名：{}）",
+                status.group_name,
+                variable.env_name,
+                variable.alias
+            ));
+        }
+    }
+
+    let mut resolved = profile.clone();
+    match DnsProviderKind::from_value(&profile.dns.provider) {
+        DnsProviderKind::Aliyun => {
+            resolved.dns.aliyun.access_key_id_env = required_alias(group, "AccessKeyId")?;
+            resolved.dns.aliyun.access_key_secret_env = required_alias(group, "AccessKeySecret")?;
+        }
+        DnsProviderKind::Cloudflare => {
+            resolved.dns.cloudflare.api_token_env = required_alias(group, "API Token")?;
+        }
+        DnsProviderKind::Manual | DnsProviderKind::Signer => {}
+    }
+    Ok(resolved)
+}
+
+pub fn validate_store(store: &Store) -> Result<()> {
+    let mut names = BTreeMap::new();
+    for (group_id, group) in &store.env_groups {
+        if group_id.trim().is_empty() {
+            return Err(anyhow::anyhow!("环境变量组 ID 不能为空"));
+        }
+        let name = group.name.trim();
+        if name.is_empty() {
+            return Err(anyhow::anyhow!("环境变量组名称不能为空"));
+        }
+        let normalized_name = name.to_lowercase();
+        if let Some(existing_id) = names.insert(normalized_name, group_id) {
+            return Err(anyhow::anyhow!(
+                "环境变量组名称重复：{}（{} 与 {}）",
+                name,
+                existing_id,
+                group_id
+            ));
+        }
+        let mut aliases = BTreeMap::new();
+        for entry in &group.entries {
+            let alias = entry.alias.trim();
+            let env_name = entry.env_name.trim();
+            if alias.is_empty() || env_name.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "环境变量组“{}”中的别名和环境变量名称都不能为空",
+                    name
+                ));
+            }
+            if aliases.insert(alias.to_lowercase(), alias).is_some() {
+                return Err(anyhow::anyhow!(
+                    "环境变量组“{}”中存在重复别名：{}",
+                    name,
+                    alias
+                ));
+            }
+        }
+    }
+    for profile in store.profiles.values() {
+        if let Some(group_id) = profile
+            .dns
+            .env_group_id
+            .as_deref()
+            .filter(|group_id| !group_id.trim().is_empty())
+        {
+            if !store.env_groups.contains_key(group_id) {
+                return Err(anyhow::anyhow!(
+                    "域名 {} 引用了不存在的环境变量组：{}",
+                    profile.domain,
+                    group_id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn required_alias(group: &EnvironmentGroup, alias: &str) -> Result<String> {
+    group
+        .entries
+        .iter()
+        .find(|entry| entry.alias.eq_ignore_ascii_case(alias))
+        .map(|entry| entry.env_name.clone())
+        .filter(|env_name| !env_name.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("环境变量组“{}”缺少 DNS 驱动必需别名：{}", group.name, alias)
+        })
+}
+
+fn read_environment_variable(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
 }
 
 pub fn default_monitor_config() -> MonitorConfig {
@@ -651,7 +870,11 @@ profiles:
     dns:
       provider: aliyun
 vendor_configs:
-  manual: []
+  aliyun:
+    - alias: AccessKeyId
+      key: LEGACY_ALI_KEY
+    - alias: AccessKeySecret
+      key: LEGACY_ALI_SECRET
 monitor:
   enabled: false
 "#;
@@ -663,6 +886,179 @@ monitor:
             store.profiles["*.h5por.com"].nginx.restart_mode,
             "kill_start"
         );
+        assert!(store.env_groups.contains_key("aliyun"));
+        assert!(store.env_groups.contains_key("cloudflare"));
+        assert_eq!(
+            store.env_groups["aliyun"].entries[0].env_name,
+            "LEGACY_ALI_KEY"
+        );
+        assert!(!serde_yaml::to_string(&store)
+            .unwrap()
+            .contains("vendor_configs"));
+        let legacy_profile =
+            resolve_profile_environment_group(&store, &store.profiles["*.h5por.com"]).unwrap();
+        assert_eq!(legacy_profile.dns.aliyun.access_key_id_env, "Ali_Key");
+    }
+
+    #[test]
+    fn selected_group_maps_aliyun_aliases_and_checks_all_entries() {
+        let mut profile = default_profile("*.example.com");
+        profile.dns.provider = "aliyun".to_string();
+        profile.dns.env_group_id = Some("aliyun-a".to_string());
+        let mut profiles = BTreeMap::new();
+        profiles.insert(profile.domain.clone(), profile.clone());
+        let mut store = Store {
+            current_domain: profile.domain.clone(),
+            env_groups: default_env_groups(),
+            vendor_configs: BTreeMap::new(),
+            profiles,
+            monitor: default_monitor_config(),
+            app_settings: default_app_settings(),
+        };
+        store.env_groups.insert(
+            "aliyun-a".to_string(),
+            EnvironmentGroup {
+                name: "阿里云A".to_string(),
+                entries: vec![
+                    EnvGroupEntry {
+                        alias: "AccessKeyId".to_string(),
+                        env_name: "SSL_RENEW_TEST_ALI_A_ID".to_string(),
+                    },
+                    EnvGroupEntry {
+                        alias: "AccessKeySecret".to_string(),
+                        env_name: "SSL_RENEW_TEST_ALI_A_SECRET".to_string(),
+                    },
+                    EnvGroupEntry {
+                        alias: "任意附加变量".to_string(),
+                        env_name: "SSL_RENEW_TEST_ALI_A_EXTRA".to_string(),
+                    },
+                ],
+            },
+        );
+        std::env::set_var("SSL_RENEW_TEST_ALI_A_ID", "id-value");
+        std::env::set_var("SSL_RENEW_TEST_ALI_A_SECRET", "secret-value");
+        std::env::set_var("SSL_RENEW_TEST_ALI_A_EXTRA", "extra-value");
+
+        let resolved = resolve_profile_environment_group(&store, &profile).unwrap();
+        assert_eq!(
+            resolved.dns.aliyun.access_key_id_env,
+            "SSL_RENEW_TEST_ALI_A_ID"
+        );
+        assert_eq!(
+            resolved.dns.aliyun.access_key_secret_env,
+            "SSL_RENEW_TEST_ALI_A_SECRET"
+        );
+        let status = environment_group_status(&store, &profile).unwrap().unwrap();
+        assert!(status.variables.iter().all(|item| item.is_set));
+        let serialized_status = serde_json::to_string(&status).unwrap();
+        assert!(!serialized_status.contains("id-value"));
+        assert!(!serialized_status.contains("secret-value"));
+        assert!(!serialized_status.contains("extra-value"));
+
+        std::env::remove_var("SSL_RENEW_TEST_ALI_A_ID");
+        std::env::remove_var("SSL_RENEW_TEST_ALI_A_SECRET");
+        std::env::remove_var("SSL_RENEW_TEST_ALI_A_EXTRA");
+    }
+
+    #[test]
+    fn selected_group_reports_missing_alias_or_environment_variable() {
+        let mut profile = default_profile("*.example.com");
+        profile.dns.provider = "aliyun".to_string();
+        profile.dns.env_group_id = Some("incomplete".to_string());
+        let mut profiles = BTreeMap::new();
+        profiles.insert(profile.domain.clone(), profile.clone());
+        let mut store = Store {
+            current_domain: profile.domain.clone(),
+            env_groups: BTreeMap::new(),
+            vendor_configs: BTreeMap::new(),
+            profiles,
+            monitor: default_monitor_config(),
+            app_settings: default_app_settings(),
+        };
+        store.env_groups.insert(
+            "incomplete".to_string(),
+            EnvironmentGroup {
+                name: "不完整组".to_string(),
+                entries: vec![EnvGroupEntry {
+                    alias: "AccessKeyId".to_string(),
+                    env_name: "SSL_RENEW_TEST_MISSING_ID".to_string(),
+                }],
+            },
+        );
+
+        let error = resolve_profile_environment_group(&store, &profile)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("SSL_RENEW_TEST_MISSING_ID"));
+
+        std::env::set_var("SSL_RENEW_TEST_MISSING_ID", "id-value");
+        let error = resolve_profile_environment_group(&store, &profile)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("AccessKeySecret"));
+        std::env::remove_var("SSL_RENEW_TEST_MISSING_ID");
+    }
+
+    #[test]
+    fn selected_group_maps_cloudflare_alias_and_prechecks_manual_dns() {
+        let mut cloudflare = default_profile("*.cloudflare.example.com");
+        cloudflare.dns.provider = "cloudflare".to_string();
+        cloudflare.dns.env_group_id = Some("cloudflare-a".to_string());
+        let mut manual = default_profile("*.manual.example.com");
+        manual.dns.provider = "manual".to_string();
+        manual.dns.env_group_id = Some("cloudflare-a".to_string());
+        let mut profiles = BTreeMap::new();
+        profiles.insert(cloudflare.domain.clone(), cloudflare.clone());
+        profiles.insert(manual.domain.clone(), manual.clone());
+        let mut store = Store {
+            current_domain: cloudflare.domain.clone(),
+            env_groups: BTreeMap::new(),
+            vendor_configs: BTreeMap::new(),
+            profiles,
+            monitor: default_monitor_config(),
+            app_settings: default_app_settings(),
+        };
+        store.env_groups.insert(
+            "cloudflare-a".to_string(),
+            EnvironmentGroup {
+                name: "Cloudflare A".to_string(),
+                entries: vec![EnvGroupEntry {
+                    alias: "API Token".to_string(),
+                    env_name: "SSL_RENEW_TEST_CF_A_TOKEN".to_string(),
+                }],
+            },
+        );
+
+        std::env::set_var("SSL_RENEW_TEST_CF_A_TOKEN", "token-value");
+        let resolved = resolve_profile_environment_group(&store, &cloudflare).unwrap();
+        assert_eq!(
+            resolved.dns.cloudflare.api_token_env,
+            "SSL_RENEW_TEST_CF_A_TOKEN"
+        );
+        let resolved_manual = resolve_profile_environment_group(&store, &manual).unwrap();
+        assert_eq!(resolved_manual.dns.provider, "manual");
+        std::env::remove_var("SSL_RENEW_TEST_CF_A_TOKEN");
+    }
+
+    #[test]
+    fn store_rejects_deleting_a_referenced_environment_group() {
+        let mut profile = default_profile("*.example.com");
+        profile.dns.env_group_id = Some("aliyun".to_string());
+        let mut profiles = BTreeMap::new();
+        profiles.insert(profile.domain.clone(), profile);
+        let mut store = Store {
+            current_domain: "*.example.com".to_string(),
+            env_groups: default_env_groups(),
+            vendor_configs: BTreeMap::new(),
+            profiles,
+            monitor: default_monitor_config(),
+            app_settings: default_app_settings(),
+        };
+        store.env_groups.remove("aliyun");
+        assert!(validate_store(&store)
+            .unwrap_err()
+            .to_string()
+            .contains("不存在的环境变量组"));
     }
 
     #[test]

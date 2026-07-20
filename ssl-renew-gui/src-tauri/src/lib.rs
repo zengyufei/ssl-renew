@@ -1,5 +1,8 @@
 use serde_json::Value;
-use ssl_core::config::{load_store, normalize_store, profiles_path, save_store, Store};
+use ssl_core::config::{
+    environment_group_status, load_store, normalize_store, profiles_path,
+    resolve_profile_environment_group, save_store, EnvironmentGroupStatus, Store,
+};
 use ssl_core::monitor::{next_monitor_run, selected_profiles};
 use ssl_core::signer::{
     authorize_via_pipe, default_secrets_path, init_config, lock_via_pipe, signer_status,
@@ -133,11 +136,21 @@ async fn check_certificate_cmd(domain: String, force: bool) -> Result<Value, Str
 
 #[tauri::command]
 async fn create_order_cmd(domain: String) -> Result<Value, String> {
-    let profile = profile(&domain)?;
+    let profile = runtime_profile(&domain)?;
     let runtime = workflow::create_order_prepare_dns(&profile)
         .await
         .map_err(|err| err.to_string())?;
     serde_json::to_value(runtime.session.challenges).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn environment_group_status_cmd(domain: String) -> Result<Option<EnvironmentGroupStatus>, String> {
+    let store = load_store(profiles_path()).map_err(|err| err.to_string())?;
+    let profile = store
+        .profiles
+        .get(&domain)
+        .ok_or_else(|| format!("找不到配置：{domain}"))?;
+    environment_group_status(&store, profile).map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -258,7 +271,14 @@ async fn run_monitor(app: AppHandle, mut stop: watch::Receiver<bool>) {
                 emit(&app, format!("手动DNS 无法无人值守续期，已跳过：{domain}"));
                 continue;
             }
-            match workflow::renew_profile(profile, false).await {
+            let runtime_profile = match resolve_profile_environment_group(&store, profile) {
+                Ok(profile) => profile,
+                Err(err) => {
+                    emit(&app, format!("{}：执行失败：{err:#}", domain));
+                    continue;
+                }
+            };
+            match workflow::renew_profile(&runtime_profile, false).await {
                 Ok(outcome) => emit(&app, format!("{}：{}", domain, outcome.message)),
                 Err(err) => emit(&app, format!("{}：执行失败：{err:#}", domain)),
             }
@@ -273,6 +293,15 @@ fn profile(domain: &str) -> Result<ssl_core::config::Profile, String> {
         .get(domain)
         .cloned()
         .ok_or_else(|| format!("找不到配置：{domain}"))
+}
+
+fn runtime_profile(domain: &str) -> Result<ssl_core::config::Profile, String> {
+    let store = load_store(profiles_path()).map_err(|err| err.to_string())?;
+    let profile = store
+        .profiles
+        .get(domain)
+        .ok_or_else(|| format!("找不到配置：{domain}"))?;
+    resolve_profile_environment_group(&store, profile).map_err(|err| err.to_string())
 }
 
 fn emit(app: &AppHandle, text: String) {
@@ -298,6 +327,7 @@ pub fn run() {
             signer_authorize_test_cmd,
             check_certificate_cmd,
             create_order_cmd,
+            environment_group_status_cmd,
             dns_check_cmd,
             issue_cmd,
             restart_cmd,

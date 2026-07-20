@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Environment variable groups with stable IDs, user-defined names, and arbitrary alias-to-environment-variable mappings.
+- GUI support for adding, renaming, deleting, and selecting environment variable groups per domain profile.
+- Execution preflight that reports configured variable names and whether they are set, without exposing values.
+
+### Changed
+
+- Vendor configuration is now general environment variable configuration. DNS provider selection remains separate.
+- Aliyun and Cloudflare drivers can read their required aliases from the selected environment variable group.
+
+### Fixed
+
+- Existing profiles without an environment variable group keep using their legacy provider-specific environment variable fields.
+- Legacy `vendor_configs` data migrates to the default environment variable groups and is no longer saved.
+
 ## [0.1.0] - 2026-06-27
 
 ### Added

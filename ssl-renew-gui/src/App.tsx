@@ -6,12 +6,18 @@ import "./style.css";
 type Store = {
   current_domain: string;
   profiles: Record<string, Profile>;
-  vendor_configs: Record<string, VendorEntry[]>;
+  env_groups: Record<string, EnvironmentGroup>;
   monitor: MonitorConfig;
   app_settings: AppSettings;
 };
 
-type VendorEntry = { alias: string; key: string };
+type EnvironmentGroup = { name: string; entries: EnvGroupEntry[] };
+type EnvGroupEntry = { alias: string; env_name: string };
+type EnvironmentGroupStatus = {
+  group_id: string;
+  group_name: string;
+  variables: Array<{ alias: string; env_name: string; is_set: boolean }>;
+};
 type NotificationScope = {
   step_check_success: boolean;
   step_check_failure: boolean;
@@ -62,7 +68,7 @@ type Profile = {
     state_dir: string;
     work_dir: string;
   };
-  dns: { provider: string; signer?: { pipe_name: string } };
+  dns: { provider: string; env_group_id?: string; signer?: { pipe_name: string } };
   nginx: { enabled: boolean; restart_mode?: string; exe_path: string; working_dir: string; kill_image_name: string };
 };
 type MonitorConfig = {
@@ -89,7 +95,6 @@ const providerOptions = [
   ["cloudflare", "Cloudflare"],
   ["signer", "签发程序"]
 ];
-const vendorProviderOptions = providerOptions.filter(([value]) => value !== "manual" && value !== "signer");
 const appVersion = "0.1.0";
 const defaultSettings: AppSettings = {
   theme: "light",
@@ -131,7 +136,7 @@ const i18n = {
     profiles: "域名配置",
     addProfile: "新增配置",
     deleteProfile: "删除配置",
-    vendorConfig: "厂商配置",
+    vendorConfig: "环境变量配置",
     signerProgram: "签发程序",
     monitor: "启动监控",
     openGithub: "打开项目仓库",
@@ -152,6 +157,11 @@ const i18n = {
     daysBeforeExpiry: "提前续期天数",
     email: "邮箱",
     dnsProvider: "DNS 厂商",
+    environmentGroup: "环境变量配置",
+    noEnvironmentGroup: "不使用环境变量配置（旧配置）",
+    environmentGroupStatus: "环境变量检查",
+    environmentVariablePresent: "已设置",
+    environmentVariableMissing: "未设置",
     useSigner: "使用签发程序代请求厂商",
     signerPipe: "签发程序 Pipe",
     signerTitle: "签发程序管理",
@@ -196,10 +206,17 @@ const i18n = {
     confirmDeleteMessage: "确定删除配置 {domain} 吗？不会删除证书文件。",
     addProfileTitle: "新增域名配置",
     addProfileHelp: "新增后会复制当前配置作为模板，并自动生成证书 PEM/KEY 默认路径。",
-    vendorTitle: "厂商配置管理",
+    vendorTitle: "环境变量配置管理",
+    environmentGroupName: "环境变量组名称",
+    environmentGroupNamePlaceholder: "例如 阿里云A",
+    environmentVariableName: "环境变量名称",
+    addEnvironmentGroup: "新增环境变量组",
+    deleteEnvironmentGroup: "删除环境变量组",
+    environmentGroupInUse: "该环境变量组正被域名配置引用，不能删除。",
+    environmentGroupNameDuplicate: "环境变量组名称不能为空且必须唯一。",
+    emptyEnvironmentGroup: "当前环境变量组没有变量名称。",
     aliasPlaceholder: "别名，例如 AccessKeyId",
-    envKeyPlaceholder: "环境变量 key，例如 Ali_Key",
-    emptyVendor: "当前厂商没有环境变量要求。",
+    envKeyPlaceholder: "环境变量名称，例如 Ali_Key",
     monitorConfig: "监控配置",
     monitorFrequency: "监控频率",
     daily: "每天固定时间",
@@ -284,7 +301,7 @@ const i18n = {
     profiles: "Domain Profiles",
     addProfile: "Add Profile",
     deleteProfile: "Delete Profile",
-    vendorConfig: "Vendors",
+    vendorConfig: "Environment Variables",
     signerProgram: "Signer",
     monitor: "Monitor",
     openGithub: "Open repository",
@@ -305,6 +322,11 @@ const i18n = {
     daysBeforeExpiry: "Renew before expiry days",
     email: "Email",
     dnsProvider: "DNS Provider",
+    environmentGroup: "Environment Variable Configuration",
+    noEnvironmentGroup: "No environment variable configuration (legacy settings)",
+    environmentGroupStatus: "Environment variable check",
+    environmentVariablePresent: "Set",
+    environmentVariableMissing: "Missing",
     useSigner: "Use signer agent for DNS provider requests",
     signerPipe: "Signer Pipe",
     signerTitle: "Signer Agent",
@@ -349,10 +371,17 @@ const i18n = {
     confirmDeleteMessage: "Delete profile {domain}? Certificate files will not be removed.",
     addProfileTitle: "Add Domain Profile",
     addProfileHelp: "The new profile copies the current one as a template and creates default PEM/KEY paths.",
-    vendorTitle: "Vendor Config",
+    vendorTitle: "Environment Variable Configuration",
+    environmentGroupName: "Environment group name",
+    environmentGroupNamePlaceholder: "For example, Aliyun A",
+    environmentVariableName: "Environment variable name",
+    addEnvironmentGroup: "Add environment group",
+    deleteEnvironmentGroup: "Delete environment group",
+    environmentGroupInUse: "This environment group is used by a domain profile and cannot be deleted.",
+    environmentGroupNameDuplicate: "The environment group name must be non-empty and unique.",
+    emptyEnvironmentGroup: "This environment group has no variable names.",
     aliasPlaceholder: "Alias, e.g. AccessKeyId",
-    envKeyPlaceholder: "Env key, e.g. Ali_Key",
-    emptyVendor: "No environment variables configured for this vendor.",
+    envKeyPlaceholder: "Environment variable name, e.g. Ali_Key",
     monitorConfig: "Monitor Profiles",
     monitorFrequency: "Schedule",
     daily: "Daily",
@@ -463,6 +492,8 @@ export default function App() {
   const [loadError, setLoadError] = useState("");
   const [skipCertCheckGate, setSkipCertCheckGate] = useState(true);
   const [dnsChallenges, setDnsChallenges] = useState<Record<string, DnsChallenge[]>>({});
+  const [envGroupStatus, setEnvGroupStatus] = useState<EnvironmentGroupStatus | null>(null);
+  const [envGroupStatusError, setEnvGroupStatusError] = useState("");
   const logRef = useRef<HTMLPreElement | null>(null);
   const profile = current && store ? store.profiles[current] : null;
   const settings = { ...defaultSettings, ...(store?.app_settings ?? {}) };
@@ -492,6 +523,34 @@ export default function App() {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [logs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const groupId = profile?.dns.env_group_id;
+    if (!current || !groupId) {
+      setEnvGroupStatus(null);
+      setEnvGroupStatusError("");
+      return () => {
+        cancelled = true;
+      };
+    }
+    void invoke<EnvironmentGroupStatus | null>("environment_group_status_cmd", { domain: current })
+      .then((status) => {
+        if (!cancelled) {
+          setEnvGroupStatus(status);
+          setEnvGroupStatusError("");
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setEnvGroupStatus(null);
+          setEnvGroupStatusError(String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [current, profile?.dns.env_group_id, store?.env_groups]);
 
   async function refresh() {
     try {
@@ -799,7 +858,7 @@ export default function App() {
         <section className="panel">
           <h1>{step + 1}. {localizedSteps[step]}</h1>
           {step === 0 && <CheckStep profile={profile} update={updateProfile} t={t} />}
-          {step === 1 && <OrderStep profile={profile} update={updateProfile} t={t} />}
+          {step === 1 && <OrderStep profile={profile} envGroups={store.env_groups} envGroupStatus={envGroupStatus} envGroupStatusError={envGroupStatusError} update={updateProfile} t={t} />}
           {step === 2 && <DnsCheckStep challenges={dnsChallenges[current] ?? []} copy={copyText} t={t} />}
           {step === 3 && <IssueStep profile={profile} update={updateProfile} t={t} />}
           {step === 4 && <RestartStep profile={profile} update={updateProfile} t={t} />}
@@ -858,10 +917,16 @@ function CheckStep({ profile, update, t }: { profile: Profile; update: (mutator:
 
 function OrderStep({
   profile,
+  envGroups,
+  envGroupStatus,
+  envGroupStatusError,
   update,
   t
 }: {
   profile: Profile;
+  envGroups: Record<string, EnvironmentGroup>;
+  envGroupStatus: EnvironmentGroupStatus | null;
+  envGroupStatusError: string;
   update: (mutator: (profile: Profile) => void) => void;
   t: (key: I18nKey) => string;
 }) {
@@ -874,6 +939,30 @@ function OrderStep({
       <select value={profile.dns.provider} onChange={(e) => update((p) => (p.dns.provider = e.target.value))}>
         {providerOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select>
+      <label>{t("environmentGroup")}</label>
+      <select
+        value={profile.dns.env_group_id ?? ""}
+        onChange={(event) => update((p) => {
+          p.dns.env_group_id = event.target.value || undefined;
+        })}
+      >
+        <option value="">{t("noEnvironmentGroup")}</option>
+        {Object.entries(envGroups).map(([id, group]) => <option key={id} value={id}>{group.name}</option>)}
+      </select>
+      {profile.dns.env_group_id && (
+        <div className="env-status" aria-live="polite">
+          <strong>{t("environmentGroupStatus")}</strong>
+          {envGroupStatusError && <p className="env-status-error">{envGroupStatusError}</p>}
+          {!envGroupStatusError && envGroupStatus?.variables.length === 0 && <p className="empty">{t("emptyEnvironmentGroup")}</p>}
+          {!envGroupStatusError && envGroupStatus?.variables.map((variable) => (
+            <div className="env-status-row" key={`${variable.alias}-${variable.env_name}`}>
+              <span>{variable.alias}</span>
+              <code>{variable.env_name}</code>
+              <span className={variable.is_set ? "ok" : "missing"}>{variable.is_set ? t("environmentVariablePresent") : t("environmentVariableMissing")}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <label>{t("useSigner")}</label>
       <Switch checked={signerEnabled} onChange={(checked) => update((p) => {
         p.dns.provider = checked ? "signer" : "manual";
@@ -1048,23 +1137,86 @@ function ConfirmDialog({ title, message, confirmText, close, confirm, t }: { tit
 }
 
 function VendorDialog({ store, setStore, close, save, t }: { store: Store; setStore: (s: Store) => void; close: () => void; save: (s?: Store) => Promise<Store | null>; t: (key: I18nKey) => string }) {
-  const [provider, setProvider] = useState("aliyun");
+  const [selectedId, setSelectedId] = useState(() => Object.keys(store.env_groups)[0] ?? "");
+  const [newGroupName, setNewGroupName] = useState("");
   const [alias, setAlias] = useState("");
-  const [key, setKey] = useState("");
-  const entries = store.vendor_configs[provider] ?? [];
-  function add() {
-    if (!alias.trim() || !key.trim()) return;
+  const [envName, setEnvName] = useState("");
+  const [message, setMessage] = useState("");
+  const groups = Object.entries(store.env_groups);
+  const selectedGroup = store.env_groups[selectedId];
+
+  useEffect(() => {
+    if (!selectedGroup) setSelectedId(groups[0]?.[0] ?? "");
+  }, [selectedGroup, groups]);
+
+  function groupNameExists(name: string, exceptId?: string) {
+    const normalized = name.trim().toLocaleLowerCase();
+    return groups.some(([id, group]) => id !== exceptId && group.name.trim().toLocaleLowerCase() === normalized);
+  }
+
+  function addGroup() {
+    const name = newGroupName.trim();
+    if (!name || groupNameExists(name)) {
+      setMessage(t("environmentGroupNameDuplicate"));
+      return;
+    }
+    const id = `env-group-${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
     const next = clone(store);
-    next.vendor_configs[provider] = [...(next.vendor_configs[provider] ?? []), { alias: alias.trim(), key: key.trim() }];
+    next.env_groups[id] = { name, entries: [] };
+    setStore(next);
+    setSelectedId(id);
+    setNewGroupName("");
+    setMessage("");
+  }
+
+  function renameGroup(name: string) {
+    if (!selectedGroup) return;
+    if (!name.trim() || groupNameExists(name, selectedId)) {
+      setMessage(t("environmentGroupNameDuplicate"));
+      return;
+    }
+    const next = clone(store);
+    next.env_groups[selectedId].name = name;
+    setStore(next);
+    setMessage("");
+  }
+
+  function deleteGroup() {
+    if (!selectedGroup) return;
+    if (Object.values(store.profiles).some((profile) => profile.dns.env_group_id === selectedId)) {
+      setMessage(t("environmentGroupInUse"));
+      return;
+    }
+    const next = clone(store);
+    delete next.env_groups[selectedId];
+    setStore(next);
+    setSelectedId(Object.keys(next.env_groups)[0] ?? "");
+    setMessage("");
+  }
+
+  function addEntry() {
+    if (!selectedGroup || !alias.trim() || !envName.trim()) return;
+    const next = clone(store);
+    next.env_groups[selectedId].entries.push({ alias: alias.trim(), env_name: envName.trim() });
     setStore(next);
     setAlias("");
-    setKey("");
+    setEnvName("");
   }
-  function remove(index: number) {
+
+  function updateEntry(index: number, field: keyof EnvGroupEntry, value: string) {
+    if (!selectedGroup) return;
     const next = clone(store);
-    next.vendor_configs[provider].splice(index, 1);
+    next.env_groups[selectedId].entries[index][field] = value;
     setStore(next);
   }
+
+  function removeEntry(index: number) {
+    if (!selectedGroup) return;
+    const next = clone(store);
+    next.env_groups[selectedId].entries.splice(index, 1);
+    setStore(next);
+  }
+
   return (
     <Modal
       title={t("vendorTitle")}
@@ -1073,28 +1225,36 @@ function VendorDialog({ store, setStore, close, save, t }: { store: Store; setSt
     >
       <div className="vendor-layout">
         <div className="vendor-list">
-          {vendorProviderOptions.map(([value, label]) => (
-            <button key={value} className={provider === value ? "active" : ""} onClick={() => setProvider(value)}>
-              {label}
-            </button>
-          ))}
+          {groups.map(([id, group]) => <button key={id} className={selectedId === id ? "active" : ""} onClick={() => { setSelectedId(id); setMessage(""); }}>{group.name}</button>)}
+          <div className="group-add-form">
+            <input placeholder={t("environmentGroupNamePlaceholder")} value={newGroupName} onChange={(event) => setNewGroupName(event.target.value)} />
+            <button onClick={addGroup}>{t("add")}</button>
+          </div>
         </div>
         <div className="vendor-panel">
-          <div className="env-list">
-            {entries.length === 0 && <p className="empty">{t("emptyVendor")}</p>}
-            {entries.map((entry, index) => (
-              <div className="env-row" key={`${entry.alias}-${entry.key}`}>
-                <span>{entry.alias}</span>
-                <code>{entry.key}</code>
-                <button onClick={() => remove(index)}>删除</button>
-              </div>
-            ))}
-          </div>
-          <div className="inline-form">
-            <input placeholder={t("aliasPlaceholder")} value={alias} onChange={(event) => setAlias(event.target.value)} />
-            <input placeholder={t("envKeyPlaceholder")} value={key} onChange={(event) => setKey(event.target.value)} />
-            <button onClick={add}>{t("add")}</button>
-          </div>
+          {selectedGroup ? <>
+            <div className="group-name-row">
+              <label>{t("environmentGroupName")}</label>
+              <input value={selectedGroup.name} onChange={(event) => renameGroup(event.target.value)} />
+              <button className="danger" onClick={deleteGroup}>{t("delete")}</button>
+            </div>
+            {message && <p className="env-status-error">{message}</p>}
+            <div className="env-list">
+              {selectedGroup.entries.length === 0 && <p className="empty">{t("emptyEnvironmentGroup")}</p>}
+              {selectedGroup.entries.map((entry, index) => (
+                <div className="env-row" key={`${index}-${entry.alias}-${entry.env_name}`}>
+                  <input aria-label={t("aliasPlaceholder")} value={entry.alias} onChange={(event) => updateEntry(index, "alias", event.target.value)} />
+                  <input aria-label={t("environmentVariableName")} value={entry.env_name} onChange={(event) => updateEntry(index, "env_name", event.target.value)} />
+                  <button onClick={() => removeEntry(index)}>{t("delete")}</button>
+                </div>
+              ))}
+            </div>
+            <div className="inline-form">
+              <input placeholder={t("aliasPlaceholder")} value={alias} onChange={(event) => setAlias(event.target.value)} />
+              <input placeholder={t("envKeyPlaceholder")} value={envName} onChange={(event) => setEnvName(event.target.value)} />
+              <button onClick={addEntry}>{t("add")}</button>
+            </div>
+          </> : <p className="empty">{t("emptyEnvironmentGroup")}</p>}
         </div>
       </div>
     </Modal>

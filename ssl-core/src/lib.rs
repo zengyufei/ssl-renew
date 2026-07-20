@@ -21,8 +21,10 @@ pub fn install_default_crypto_provider() {
 
 pub use acme::RuntimeOrder;
 pub use config::{
-    default_monitor_config, default_profile, default_vendor_configs, load_store,
-    safe_domain_filename, save_store, DnsProviderKind, Profile, Store,
+    default_env_groups, default_monitor_config, default_profile, default_vendor_configs,
+    environment_group_status, load_store, resolve_profile_environment_group, safe_domain_filename,
+    save_store, DnsProviderKind, EnvGroupEntry, EnvironmentGroup, EnvironmentGroupStatus,
+    EnvironmentVariableStatus, Profile, Store,
 };
 pub use cron::cron_next_run;
 pub use dns::DnsChallengeInfo;

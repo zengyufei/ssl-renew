@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use clap::{Args, Parser, Subcommand};
 use ssl_core::config::{
-    default_profile, load_store, profiles_path, save_store, DnsProviderKind, Profile,
-    VendorEnvEntry,
+    default_profile, load_store, profiles_path, resolve_profile_environment_group, save_store,
+    DnsProviderKind, EnvGroupEntry, EnvironmentGroup, Profile,
 };
 use ssl_core::monitor::{next_monitor_run, selected_profiles};
 use ssl_core::signer::{
@@ -23,7 +23,8 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Profile(ProfileCommand),
-    Vendor(VendorCommand),
+    #[command(name = "env-group", visible_alias = "vendor")]
+    EnvGroup(EnvGroupCommand),
     Signer(SignerCommand),
     Check(DomainArgs),
     Order(OrderArgs),
@@ -80,6 +81,8 @@ struct ProfileSetArgs {
     #[arg(long)]
     dns_provider: Option<String>,
     #[arg(long)]
+    env_group: Option<String>,
+    #[arg(long)]
     nginx_enabled: Option<bool>,
     #[arg(long)]
     nginx_restart_mode: Option<String>,
@@ -96,9 +99,9 @@ struct ProfileSetArgs {
 }
 
 #[derive(Args)]
-struct VendorCommand {
+struct EnvGroupCommand {
     #[command(subcommand)]
-    command: VendorSubcommand,
+    command: EnvGroupSubcommand,
 }
 
 #[derive(Args)]
@@ -183,15 +186,27 @@ struct SignerTestPresentArgs {
 }
 
 #[derive(Subcommand)]
-enum VendorSubcommand {
+enum EnvGroupSubcommand {
     List,
     Add {
-        provider: String,
-        alias: String,
-        key: String,
+        name: String,
+        #[arg(long)]
+        id: Option<String>,
     },
-    Remove {
-        provider: String,
+    Rename {
+        id: String,
+        name: String,
+    },
+    Delete {
+        id: String,
+    },
+    AddEntry {
+        group_id: String,
+        alias: String,
+        env_name: String,
+    },
+    RemoveEntry {
+        group_id: String,
         alias: String,
     },
 }
@@ -201,7 +216,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Profile(cmd) => profile_command(cmd)?,
-        Commands::Vendor(cmd) => vendor_command(cmd)?,
+        Commands::EnvGroup(cmd) => env_group_command(cmd)?,
         Commands::Signer(cmd) => signer_command(cmd).await?,
         Commands::Check(args) => {
             let profile = profile_from_args(args.domain)?;
@@ -209,7 +224,7 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
         Commands::Order(args) => {
-            let profile = profile_from_args(args.domain)?;
+            let profile = profile_from_args(args.domain.clone())?;
             if !args.force {
                 let status = workflow::check_certificate(&profile, false).await?;
                 if !status.should_renew {
@@ -217,6 +232,7 @@ async fn main() -> Result<()> {
                     return Ok(());
                 }
             }
+            let profile = runtime_profile_from_args(args.domain)?;
             let runtime = workflow::create_order_prepare_dns(&profile).await?;
             println!(
                 "{}",
@@ -243,7 +259,7 @@ async fn main() -> Result<()> {
             println!("Nginx 重启步骤已执行");
         }
         Commands::Renew(args) => {
-            let profile = profile_from_args(args.domain)?;
+            let profile = runtime_profile_from_args(args.domain)?;
             let outcome = workflow::renew_profile(&profile, args.force).await?;
             println!("{}", outcome.message);
         }
@@ -322,6 +338,9 @@ fn apply_profile_set(profile: &mut Profile, args: ProfileSetArgs) {
     if let Some(value) = args.dns_provider {
         profile.dns.provider = DnsProviderKind::from_value(&value).as_str().to_string();
     }
+    if let Some(value) = args.env_group {
+        profile.dns.env_group_id = (!value.trim().is_empty()).then_some(value);
+    }
     if let Some(value) = args.nginx_enabled {
         profile.nginx.enabled = value;
     }
@@ -348,34 +367,81 @@ fn apply_profile_set(profile: &mut Profile, args: ProfileSetArgs) {
     }
 }
 
-fn vendor_command(cmd: VendorCommand) -> Result<()> {
+fn env_group_command(cmd: EnvGroupCommand) -> Result<()> {
     let path = profiles_path();
     let mut store = load_store(&path)?;
     match cmd.command {
-        VendorSubcommand::List => {
-            println!("{}", serde_json::to_string_pretty(&store.vendor_configs)?);
+        EnvGroupSubcommand::List => {
+            println!("{}", serde_json::to_string_pretty(&store.env_groups)?);
         }
-        VendorSubcommand::Add {
-            provider,
-            alias,
-            key,
-        } => {
-            let provider = DnsProviderKind::from_value(&provider).as_str().to_string();
-            store
-                .vendor_configs
-                .entry(provider)
-                .or_default()
-                .push(VendorEnvEntry { alias, key });
+        EnvGroupSubcommand::Add { name, id } => {
+            let id = id.unwrap_or_else(|| {
+                format!(
+                    "env-group-{}",
+                    chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+                )
+            });
+            if store.env_groups.contains_key(&id) {
+                return Err(anyhow!("环境变量组 ID 已存在：{id}"));
+            }
+            store.env_groups.insert(
+                id,
+                EnvironmentGroup {
+                    name,
+                    entries: vec![],
+                },
+            );
             save_store(&path, &store)?;
-            println!("已添加厂商环境变量");
+            println!("已新增环境变量组");
         }
-        VendorSubcommand::Remove { provider, alias } => {
-            let provider = DnsProviderKind::from_value(&provider).as_str().to_string();
-            if let Some(items) = store.vendor_configs.get_mut(&provider) {
-                items.retain(|item| item.alias != alias);
+        EnvGroupSubcommand::Rename { id, name } => {
+            let group = store
+                .env_groups
+                .get_mut(&id)
+                .ok_or_else(|| anyhow!("找不到环境变量组：{id}"))?;
+            group.name = name;
+            save_store(&path, &store)?;
+            println!("已重命名环境变量组");
+        }
+        EnvGroupSubcommand::Delete { id } => {
+            let referenced_by = store
+                .profiles
+                .values()
+                .find(|profile| profile.dns.env_group_id.as_deref() == Some(id.as_str()))
+                .map(|profile| profile.domain.clone());
+            if let Some(domain) = referenced_by {
+                return Err(anyhow!(
+                    "环境变量组 {id} 正被域名配置 {domain} 引用，不能删除"
+                ));
+            }
+            if store.env_groups.remove(&id).is_none() {
+                return Err(anyhow!("找不到环境变量组：{id}"));
             }
             save_store(&path, &store)?;
-            println!("已删除厂商环境变量");
+            println!("已删除环境变量组");
+        }
+        EnvGroupSubcommand::AddEntry {
+            group_id,
+            alias,
+            env_name,
+        } => {
+            store
+                .env_groups
+                .get_mut(&group_id)
+                .ok_or_else(|| anyhow!("找不到环境变量组：{group_id}"))?
+                .entries
+                .push(EnvGroupEntry { alias, env_name });
+            save_store(&path, &store)?;
+            println!("已添加环境变量名称");
+        }
+        EnvGroupSubcommand::RemoveEntry { group_id, alias } => {
+            let group = store
+                .env_groups
+                .get_mut(&group_id)
+                .ok_or_else(|| anyhow!("找不到环境变量组：{group_id}"))?;
+            group.entries.retain(|item| item.alias != alias);
+            save_store(&path, &store)?;
+            println!("已删除环境变量名称");
         }
     }
     Ok(())
@@ -383,12 +449,22 @@ fn vendor_command(cmd: VendorCommand) -> Result<()> {
 
 fn profile_from_args(domain: Option<String>) -> Result<Profile> {
     let store = load_store(profiles_path())?;
-    let domain = domain.unwrap_or(store.current_domain);
+    let domain = domain.unwrap_or_else(|| store.current_domain.clone());
     store
         .profiles
         .get(&domain)
         .cloned()
         .ok_or_else(|| anyhow!("找不到配置：{domain}"))
+}
+
+fn runtime_profile_from_args(domain: Option<String>) -> Result<Profile> {
+    let store = load_store(profiles_path())?;
+    let domain = domain.unwrap_or_else(|| store.current_domain.clone());
+    let profile = store
+        .profiles
+        .get(&domain)
+        .ok_or_else(|| anyhow!("找不到配置：{domain}"))?;
+    resolve_profile_environment_group(&store, &profile)
 }
 
 async fn signer_command(cmd: SignerCommand) -> Result<()> {
@@ -488,7 +564,14 @@ async fn monitor_foreground() -> Result<()> {
                 println!("手动DNS 无法无人值守续期，已跳过：{domain}");
                 continue;
             }
-            match workflow::renew_profile(profile, false).await {
+            let runtime_profile = match resolve_profile_environment_group(&store, profile) {
+                Ok(profile) => profile,
+                Err(err) => {
+                    eprintln!("{}：执行失败：{err:#}", domain);
+                    continue;
+                }
+            };
+            match workflow::renew_profile(&runtime_profile, false).await {
                 Ok(outcome) => println!("{}：{}", domain, outcome.message),
                 Err(err) => eprintln!("{}：执行失败：{err:#}", domain),
             }

@@ -12,7 +12,7 @@ This project is suitable for Windows servers or operator workstations that manag
 
 ## Screenshots
 
-The screenshots follow the main workflow. `1-5` map to certificate processing steps, `6` shows monitoring, and `7` shows vendor configuration.
+The screenshots follow the main workflow. `1-5` map to certificate processing steps, `6` shows monitoring, and `7` shows environment variable configuration.
 
 <img src="screenshot/1.png" alt="Step 1: Check certificate" width="520">
 <img src="screenshot/2.png" alt="Step 2: Create order" width="520">
@@ -20,7 +20,7 @@ The screenshots follow the main workflow. `1-5` map to certificate processing st
 <img src="screenshot/4.png" alt="Step 4: Issue and save certificate" width="520">
 <img src="screenshot/5.png" alt="Step 5: Restart Nginx" width="520">
 <img src="screenshot/6.png" alt="Monitor configuration" width="520">
-<img src="screenshot/7.png" alt="Vendor configuration" width="520">
+<img src="screenshot/7.png" alt="Environment variable configuration" width="520">
 
 ## Features
 
@@ -130,13 +130,26 @@ Default paths:
 - Nginx executable: `D:/nginx/nginx.exe`
 - Nginx working directory: `D:/nginx`
 
-DNS provider environment variables default to `Ali_Key`, `Ali_Secret`, and `CF_Token`. You can change those names in the GUI vendor settings, or use signer agent to keep DNS keys encrypted in a separate secrets file.
+Environment Variable Configuration manages groups of environment variable names only. It never stores AccessKeys, tokens, or variable values, and it does not select a DNS API type. The default groups are Aliyun (`AccessKeyId -> Ali_Key`, `AccessKeySecret -> Ali_Secret`) and Cloudflare (`API Token -> CF_Token`).
+
+For multiple Aliyun accounts, set distinct Windows environment variable names such as `ALIYUN_A_ID`, `ALIYUN_A_SECRET`, `ALIYUN_B_ID`, and `ALIYUN_B_SECRET`. Then add groups such as “Aliyun A” and “Aliyun B” in the GUI, with `AccessKeyId` and `AccessKeySecret` aliases mapped to the corresponding variable names. Keep Aliyun selected as the DNS provider in Create Order and select the matching environment group. Before execution, the app shows only each variable name and whether it is set, then reads the selected values. It never displays or writes the values.
+
+Groups can contain any additional variables, all of which are checked before execution. Aliyun automatic DNS still requires `AccessKeyId` and `AccessKeySecret`; Cloudflare automatic DNS still requires `API Token`. Manual DNS and signer can also select a group for preflight checks, but do not consume its values. With no group selected, existing profiles continue using their legacy `dns.aliyun.*_env` or `dns.cloudflare.api_token_env` settings.
+
+The CLI can manage these name groups too:
+
+```powershell
+target\release\ssl-renew-cli.exe env-group add "Aliyun A" --id aliyun-a
+target\release\ssl-renew-cli.exe env-group add-entry aliyun-a AccessKeyId ALIYUN_A_ID
+target\release\ssl-renew-cli.exe env-group add-entry aliyun-a AccessKeySecret ALIYUN_A_SECRET
+target\release\ssl-renew-cli.exe profile set --domain "*.example.com" --dns-provider aliyun --env-group aliyun-a
+```
 
 ## Security and Privacy
 
 This project accesses the file system to read and write `profiles.yaml`, certificates, private keys, logs, ACME state, ACME work data, and signer secrets. When Nginx restart is enabled, it runs local Nginx commands or stops and starts the configured Nginx process. The GUI performs these operations through custom Tauri commands; the Tauri capability file only enables default core/event/listen permissions.
 
-Do not commit real `profiles.yaml`, `state/`, `work/`, `logs/`, certificates, private keys, `.env` files, DNS API keys, or signer secrets. `.gitignore` excludes these by default. API keys and notification tokens are sensitive and should stay on trusted local machines. Signer high-security mode encrypts DNS keys with a passphrase-derived key and protects metadata with Windows DPAPI.
+Do not commit real `profiles.yaml`, `state/`, `work/`, `logs/`, certificates, private keys, `.env` files, DNS API keys, or signer secrets. `.gitignore` excludes these by default. Environment Variable Configuration saves only variable names, never values. API keys and notification tokens are sensitive and should stay on trusted local machines. Signer high-security mode encrypts DNS keys with a passphrase-derived key and protects metadata with Windows DPAPI.
 
 ## CI/CD and Releases
 
