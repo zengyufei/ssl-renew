@@ -10,6 +10,7 @@ use ssl_core::signer::{
 };
 use ssl_core::workflow;
 use ssl_core::DnsProviderKind;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -227,6 +228,50 @@ fn open_github_profile() -> Result<(), String> {
         .map_err(|err| format!("打开 GitHub 失败：{err}"))
 }
 
+#[tauri::command]
+fn open_path_folder(path: String) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("请先填写文件路径".to_string());
+    }
+    let requested = PathBuf::from(path);
+    let folder = if requested.is_dir() {
+        requested
+    } else {
+        requested
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+    };
+    if !folder.is_dir() {
+        return Err(format!("文件夹不存在：{}", folder.display()));
+    }
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("explorer.exe");
+        command.arg(&folder);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(&folder);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(&folder);
+        command
+    };
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("打开文件夹失败：{err}"))
+}
+
 async fn run_monitor(app: AppHandle, mut stop: watch::Receiver<bool>) {
     loop {
         let store = match load_store(profiles_path()) {
@@ -333,7 +378,8 @@ pub fn run() {
             restart_cmd,
             start_monitor_cmd,
             stop_monitor_cmd,
-            open_github_profile
+            open_github_profile,
+            open_path_folder
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

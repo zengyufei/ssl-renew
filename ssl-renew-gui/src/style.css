@@ -362,6 +362,27 @@ main {
   line-height: 1.55;
 }
 
+.field-control {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-control input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.folder-button {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
 .env-status {
   grid-column: 2;
   display: grid;

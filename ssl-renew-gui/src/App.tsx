@@ -154,6 +154,8 @@ const i18n = {
     restartNginx: "重启 Nginx",
     certPemPath: "证书 PEM 路径",
     keyPath: "私钥 KEY 路径",
+    openContainingFolder: "打开所在文件夹",
+    openFolderFailed: "打开文件夹失败",
     daysBeforeExpiry: "提前续期天数",
     email: "邮箱",
     dnsProvider: "DNS 厂商",
@@ -319,6 +321,8 @@ const i18n = {
     restartNginx: "Restart Nginx",
     certPemPath: "Certificate PEM path",
     keyPath: "Private KEY path",
+    openContainingFolder: "Open containing folder",
+    openFolderFailed: "Failed to open folder",
     daysBeforeExpiry: "Renew before expiry days",
     email: "Email",
     dnsProvider: "DNS Provider",
@@ -590,6 +594,14 @@ export default function App() {
     }
   }
 
+  async function openPathFolder(path: string) {
+    try {
+      await invoke("open_path_folder", { path });
+    } catch (error) {
+      toast(`${t("openFolderFailed")}：${String(error)}`, "error");
+    }
+  }
+
   async function copyText(text: string, label: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -857,10 +869,10 @@ export default function App() {
         </div>
         <section className="panel">
           <h1>{step + 1}. {localizedSteps[step]}</h1>
-          {step === 0 && <CheckStep profile={profile} update={updateProfile} t={t} />}
+          {step === 0 && <CheckStep profile={profile} update={updateProfile} openFolder={openPathFolder} t={t} />}
           {step === 1 && <OrderStep profile={profile} envGroups={store.env_groups} envGroupStatus={envGroupStatus} envGroupStatusError={envGroupStatusError} update={updateProfile} t={t} />}
           {step === 2 && <DnsCheckStep challenges={dnsChallenges[current] ?? []} copy={copyText} t={t} />}
-          {step === 3 && <IssueStep profile={profile} update={updateProfile} t={t} />}
+          {step === 3 && <IssueStep profile={profile} update={updateProfile} openFolder={openPathFolder} t={t} />}
           {step === 4 && <RestartStep profile={profile} update={updateProfile} t={t} />}
           <div className="actions">
             <button className="primary" disabled={busy} onClick={() => runStep(step)}>{t("executeStep")}</button>
@@ -905,11 +917,11 @@ export default function App() {
   );
 }
 
-function CheckStep({ profile, update, t }: { profile: Profile; update: (mutator: (profile: Profile) => void) => void; t: (key: I18nKey) => string }) {
+function CheckStep({ profile, update, openFolder, t }: { profile: Profile; update: (mutator: (profile: Profile) => void) => void; openFolder: (path: string) => void; t: (key: I18nKey) => string }) {
   return (
     <div className="form">
-      <Field label={t("certPemPath")} value={profile.paths.cert_file} onChange={(v) => update((p) => (p.paths.cert_file = v))} />
-      <Field label={t("keyPath")} value={profile.paths.key_file} onChange={(v) => update((p) => (p.paths.key_file = v))} />
+      <Field label={t("certPemPath")} value={profile.paths.cert_file} onChange={(v) => update((p) => (p.paths.cert_file = v))} onOpenFolder={() => openFolder(profile.paths.cert_file)} openFolderLabel={t("openContainingFolder")} />
+      <Field label={t("keyPath")} value={profile.paths.key_file} onChange={(v) => update((p) => (p.paths.key_file = v))} onOpenFolder={() => openFolder(profile.paths.key_file)} openFolderLabel={t("openContainingFolder")} />
       <Field label={t("daysBeforeExpiry")} value={String(profile.renew.days_before_expiry)} onChange={(v) => update((p) => (p.renew.days_before_expiry = Number(v) || 30))} />
     </div>
   );
@@ -1032,11 +1044,11 @@ function DnsRecords({
   );
 }
 
-function IssueStep({ profile, update, t }: { profile: Profile; update: (mutator: (profile: Profile) => void) => void; t: (key: I18nKey) => string }) {
+function IssueStep({ profile, update, openFolder, t }: { profile: Profile; update: (mutator: (profile: Profile) => void) => void; openFolder: (path: string) => void; t: (key: I18nKey) => string }) {
   return (
     <div className="form">
-      <Field label={t("certPemPath")} value={profile.paths.cert_file} onChange={(v) => update((p) => (p.paths.cert_file = v))} />
-      <Field label={t("keyPath")} value={profile.paths.key_file} onChange={(v) => update((p) => (p.paths.key_file = v))} />
+      <Field label={t("certPemPath")} value={profile.paths.cert_file} onChange={(v) => update((p) => (p.paths.cert_file = v))} onOpenFolder={() => openFolder(profile.paths.cert_file)} openFolderLabel={t("openContainingFolder")} />
+      <Field label={t("keyPath")} value={profile.paths.key_file} onChange={(v) => update((p) => (p.paths.key_file = v))} onOpenFolder={() => openFolder(profile.paths.key_file)} openFolderLabel={t("openContainingFolder")} />
       <div className="form-note">
         {t("issueHint")}
       </div>
@@ -1060,11 +1072,14 @@ function RestartStep({ profile, update, t }: { profile: Profile; update: (mutato
   );
 }
 
-function Field({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
+function Field({ label, value, onChange, type = "text", onOpenFolder, openFolderLabel }: { label: string; value: string; onChange: (value: string) => void; type?: string; onOpenFolder?: () => void; openFolderLabel?: string }) {
   return (
     <>
       <label>{label}</label>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+      <div className="field-control">
+        <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+        {onOpenFolder && <button type="button" className="folder-button" title={openFolderLabel} aria-label={openFolderLabel} onClick={onOpenFolder}><FolderIcon /></button>}
+      </div>
     </>
   );
 }
@@ -1809,6 +1824,14 @@ function GearIcon() {
     <svg aria-hidden="true" viewBox="-1 -1 26 26" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
       <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.06.06a2.1 2.1 0 1 1-2.97 2.97l-.06-.06a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.09 1.65V21.4a2.1 2.1 0 1 1-4.2 0v-.09a1.8 1.8 0 0 0-1.18-1.66 1.8 1.8 0 0 0-1.98.36l-.06.06a2.1 2.1 0 1 1-2.97-2.97l.06-.06A1.8 1.8 0 0 0 3 15.06 1.8 1.8 0 0 0 1.35 14H1.2a2.1 2.1 0 1 1 0-4.2h.09A1.8 1.8 0 0 0 2.95 8.6a1.8 1.8 0 0 0-.36-1.98l-.06-.06A2.1 2.1 0 1 1 5.5 3.59l.06.06a1.8 1.8 0 0 0 1.98.36A1.8 1.8 0 0 0 8.6 2.36V2.2a2.1 2.1 0 1 1 4.2 0v.09a1.8 1.8 0 0 0 1.18 1.66 1.8 1.8 0 0 0 1.98-.36l.06-.06a2.1 2.1 0 1 1 2.97 2.97l-.06.06a1.8 1.8 0 0 0-.36 1.98 1.8 1.8 0 0 0 1.65 1.09h.16a2.1 2.1 0 1 1 0 4.2h-.09A1.8 1.8 0 0 0 19.4 15Z" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3.5 6.8c0-1 .8-1.8 1.8-1.8h5l1.8 2h6.6c1 0 1.8.8 1.8 1.8v8.4c0 1-.8 1.8-1.8 1.8H5.3c-1 0-1.8-.8-1.8-1.8V6.8Z" />
     </svg>
   );
 }
