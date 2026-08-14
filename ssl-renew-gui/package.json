@@ -1,7 +1,7 @@
 {
   "name": "ssl-renew-gui",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -9,8 +9,8 @@
     "build": "tsc && vite build",
     "tauri": "tauri dev",
     "tauri:cli": "tauri",
-    "tauri:exe": "npm run build && cargo build --release -p ssl-renew-gui --bin SSL证书自动续期",
-    "tauri:exe:upx": "tauri build --no-bundle && powershell -ExecutionPolicy Bypass -File ..\\build-release-upx.ps1 -SkipBuild"
+    "tauri:exe": "npm run tauri:cli -- build --no-bundle",
+    "tauri:exe:upx": "npm run tauri:cli -- build --no-bundle && powershell -ExecutionPolicy Bypass -File ..\\build-release-upx.ps1 -SkipBuild"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",

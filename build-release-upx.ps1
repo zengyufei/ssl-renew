@@ -129,22 +129,16 @@ try {
         }
 
         Write-Host ""
-        Write-Host "构建 GUI 前端..."
+        Write-Host "构建 GUI 发布版..."
         Push-Location $GuiDir
         try {
-            npm run build
+            # The Tauri CLI enables the release custom protocol, embedding dist instead of devUrl.
+            npm run tauri:cli -- build --no-bundle
             if ($LASTEXITCODE -ne 0) {
-                throw "GUI 前端构建失败"
+                throw "GUI 发布版构建失败"
             }
         } finally {
             Pop-Location
-        }
-
-        Write-Host ""
-        Write-Host "构建 GUI exe..."
-        cargo build --release -p ssl-renew-gui --bin "SSL证书自动续期"
-        if ($LASTEXITCODE -ne 0) {
-            throw "GUI exe 构建失败"
         }
     }
 

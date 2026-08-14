@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-14
+
+### Fixed
+
+- Windows Release GUI now embeds the production frontend assets and no longer attempts to load the Vite development server.
+
 ## [1.0.1] - 2026-08-14
 
 ### Added

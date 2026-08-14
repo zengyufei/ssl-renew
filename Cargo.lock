@@ -4283,7 +4283,7 @@ dependencies = [
 
 [[package]]
 name = "ssl-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4313,7 +4313,7 @@ dependencies = [
 
 [[package]]
 name = "ssl-renew-cli"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4325,7 +4325,7 @@ dependencies = [
 
 [[package]]
 name = "ssl-renew-gui"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4341,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "ssl-signer-agent"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "clap",
