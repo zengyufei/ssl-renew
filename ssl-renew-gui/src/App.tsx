@@ -295,7 +295,8 @@ const i18n = {
     aboutBody: "用于在 Windows 上管理多域名证书配置，支持 Let's Encrypt DNS-01、手动步骤、一键运行和定时监控。Rust/Tauri 版本与 CLI 共用核心逻辑。",
     version: "版本",
     copied: "已复制",
-    configSaved: "配置已保存"
+    configSaved: "配置已保存",
+    autoSaveFailed: "自动保存配置失败"
   },
   en: {
     loading: "Loading...",
@@ -462,7 +463,8 @@ const i18n = {
     aboutBody: "A Windows tool for multi-domain certificate profiles, Let's Encrypt DNS-01 renewal, manual steps, one-click runs, and scheduled monitoring. The Rust/Tauri GUI shares the same core with the CLI.",
     version: "Version",
     copied: "Copied ",
-    configSaved: "Config saved"
+    configSaved: "Config saved",
+    autoSaveFailed: "Unable to auto-save configuration"
   }
 } as const;
 
@@ -499,6 +501,9 @@ export default function App() {
   const [envGroupStatus, setEnvGroupStatus] = useState<EnvironmentGroupStatus | null>(null);
   const [envGroupStatusError, setEnvGroupStatusError] = useState("");
   const logRef = useRef<HTMLPreElement | null>(null);
+  const autoSaveTimerRef = useRef<number | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const storeVersionRef = useRef(0);
   const profile = current && store ? store.profiles[current] : null;
   const settings = { ...defaultSettings, ...(store?.app_settings ?? {}) };
   settings.toast = { ...defaultSettings.toast, ...(store?.app_settings?.toast ?? {}) };
@@ -527,6 +532,12 @@ export default function App() {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [logs]);
+
+  useEffect(() => () => {
+    if (autoSaveTimerRef.current !== null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -628,30 +639,104 @@ export default function App() {
     ]);
   }
 
+  function queueSave(nextStore: Store, preferredCurrent: string) {
+    const normalized = normalizeStoreForSave(nextStore, preferredCurrent);
+    const pending = saveQueueRef.current.then(async () => {
+      await invoke("save_profiles", { store: normalized });
+    });
+    saveQueueRef.current = pending.catch(() => undefined);
+    return pending.then(() => normalized);
+  }
+
+  function reportSaveFailure(error: unknown) {
+    const message = `${t("autoSaveFailed")}：${String(error)}`;
+    appendLog(message);
+    toast(message, "error");
+  }
+
+  async function prepareExternalStoreUpdate() {
+    ++storeVersionRef.current;
+    if (autoSaveTimerRef.current !== null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    await saveQueueRef.current;
+  }
+
+  function replaceStore(nextStore: Store) {
+    ++storeVersionRef.current;
+    if (autoSaveTimerRef.current !== null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    setStore(nextStore);
+    setCurrent(nextStore.current_domain);
+    setStep(0);
+  }
+
+  function autoSave(nextStore: Store, preferredCurrent = current) {
+    const version = ++storeVersionRef.current;
+    setStore(nextStore);
+    if (autoSaveTimerRef.current !== null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+    const snapshot = clone(nextStore);
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      void queueSave(snapshot, preferredCurrent)
+        .then((normalized) => {
+          if (version === storeVersionRef.current) {
+            setStore(normalized);
+            setCurrent(normalized.current_domain);
+          }
+        })
+        .catch(reportSaveFailure);
+    }, 350);
+  }
+
   async function save(nextStore = store, preferredCurrent = current) {
     if (!nextStore) return null;
-    const normalized = normalizeStoreForSave(nextStore, preferredCurrent);
-    await invoke("save_profiles", { store: normalized });
-    setStore(normalized);
-    setCurrent(normalized.current_domain);
-    appendLog(t("configSaved"));
-    toast(t("configSaved"), "success");
-    return normalized;
+    const version = ++storeVersionRef.current;
+    if (autoSaveTimerRef.current !== null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    try {
+      const normalized = await queueSave(nextStore, preferredCurrent);
+      if (version === storeVersionRef.current) {
+        setStore(normalized);
+        setCurrent(normalized.current_domain);
+      }
+      appendLog(t("configSaved"));
+      toast(t("configSaved"), "success");
+      return normalized;
+    } catch (error) {
+      reportSaveFailure(error);
+      throw error;
+    }
   }
 
   function normalizeStoreForSave(source: Store, preferredCurrent: string): Store {
     const next = clone(source);
     const profiles: Record<string, Profile> = {};
-    Object.values(next.profiles).forEach((item) => {
+    const domainCounts = Object.values(next.profiles).reduce<Record<string, number>>((counts, item) => {
       const domain = item.domain.trim();
-      if (!domain) return;
+      if (domain) counts[domain] = (counts[domain] ?? 0) + 1;
+      return counts;
+    }, {});
+    Object.entries(next.profiles).forEach(([key, item]) => {
+      const domain = item.domain.trim();
+      if (!domain || domainCounts[domain] > 1) {
+        profiles[key] = item;
+        return;
+      }
       item.domain = domain;
       profiles[domain] = item;
     });
     next.profiles = profiles;
     const currentProfile = source.profiles[preferredCurrent];
     const preferredDomain = currentProfile?.domain.trim();
-    if (preferredDomain && profiles[preferredDomain]) {
+    if (preferredDomain && domainCounts[preferredDomain] === 1 && profiles[preferredDomain]) {
       next.current_domain = preferredDomain;
     } else if (!profiles[next.current_domain]) {
       next.current_domain = Object.keys(profiles)[0] ?? "";
@@ -665,7 +750,7 @@ export default function App() {
     const next = clone(store);
     mutator(next.profiles[current]);
     next.current_domain = current;
-    setStore(next);
+    autoSave(next, current);
   }
 
   function addProfile(domain: string) {
@@ -690,7 +775,7 @@ export default function App() {
     newProfile.paths.key_file = `D:/cert/${safe}.key`;
     next.profiles[trimmed] = newProfile;
     next.current_domain = trimmed;
-    setStore(next);
+    autoSave(next, trimmed);
     setCurrent(trimmed);
     setStep(0);
     setShowAddProfile(false);
@@ -710,7 +795,7 @@ export default function App() {
     next.monitor.profiles = next.monitor.profiles.filter((domain) => domain !== current);
     const nextCurrent = Object.keys(next.profiles)[0] ?? "";
     next.current_domain = nextCurrent;
-    setStore(next);
+    autoSave(next, nextCurrent);
     setCurrent(nextCurrent);
     setStep(0);
     setShowDeleteConfirm(false);
@@ -853,7 +938,6 @@ export default function App() {
         <div className="topbar">
           <label>{t("domain")}</label>
           <input value={profile.domain} onChange={(e) => updateProfile((p) => (p.domain = e.target.value))} />
-          <button onClick={() => save()}>{t("saveConfig")}</button>
           <label className="run-option">
             <input type="checkbox" checked={skipCertCheckGate} onChange={(event) => setSkipCertCheckGate(event.target.checked)} />
             <span>{t("skipCertCheck")}</span>
@@ -895,18 +979,15 @@ export default function App() {
           t={t}
         />
       )}
-      {showVendor && <VendorDialog store={store} setStore={setStore} close={() => setShowVendor(false)} save={save} t={t} />}
-      {showMonitor && <MonitorDialog store={store} setStore={setStore} close={() => setShowMonitor(false)} toast={toast} t={t} />}
+      {showVendor && <VendorDialog store={store} setStore={autoSave} close={() => setShowVendor(false)} t={t} />}
+      {showMonitor && <MonitorDialog store={store} setStore={autoSave} close={() => setShowMonitor(false)} save={save} toast={toast} t={t} />}
       {showSettings && (
         <SettingsDialog
           store={store}
           profile={profile}
-          setStore={setStore}
-          onImported={(nextStore) => {
-            setStore(nextStore);
-            setCurrent(nextStore.current_domain);
-            setStep(0);
-          }}
+          setStore={autoSave}
+          beforeImport={prepareExternalStoreUpdate}
+          onImported={replaceStore}
           close={() => setShowSettings(false)}
           save={save}
           toast={toast}
@@ -1151,7 +1232,7 @@ function ConfirmDialog({ title, message, confirmText, close, confirm, t }: { tit
   );
 }
 
-function VendorDialog({ store, setStore, close, save, t }: { store: Store; setStore: (s: Store) => void; close: () => void; save: (s?: Store) => Promise<Store | null>; t: (key: I18nKey) => string }) {
+function VendorDialog({ store, setStore, close, t }: { store: Store; setStore: (s: Store) => void; close: () => void; t: (key: I18nKey) => string }) {
   const [selectedId, setSelectedId] = useState(() => Object.keys(store.env_groups)[0] ?? "");
   const [newGroupName, setNewGroupName] = useState("");
   const [alias, setAlias] = useState("");
@@ -1236,7 +1317,7 @@ function VendorDialog({ store, setStore, close, save, t }: { store: Store; setSt
     <Modal
       title={t("vendorTitle")}
       close={close}
-      footer={<><button onClick={close}>{t("close")}</button><button className="primary" onClick={() => save(store).then(() => close())}>{t("saveClose")}</button></>}
+      footer={<button onClick={close}>{t("close")}</button>}
     >
       <div className="vendor-layout">
         <div className="vendor-list">
@@ -1410,7 +1491,7 @@ function SignerUnlockPanel({ toast, t }: { toast: (message: string, kind?: Toast
   );
 }
 
-function MonitorDialog({ store, setStore, close, toast, t }: { store: Store; setStore: (s: Store) => void; close: () => void; toast: (message: string, kind?: Toast["kind"]) => void; t: (key: I18nKey) => string }) {
+function MonitorDialog({ store, setStore, close, save, toast, t }: { store: Store; setStore: (s: Store) => void; close: () => void; save: (s?: Store) => Promise<Store | null>; toast: (message: string, kind?: Toast["kind"]) => void; t: (key: I18nKey) => string }) {
   const monitor = store.monitor;
   function update(mutator: (monitor: MonitorConfig) => void) {
     const next = clone(store);
@@ -1418,7 +1499,7 @@ function MonitorDialog({ store, setStore, close, toast, t }: { store: Store; set
     setStore(next);
   }
   async function start() {
-    await invoke("save_profiles", { store });
+    await save(store);
     await invoke("start_monitor_cmd");
     toast("监控已启动", "success");
     close();
@@ -1432,7 +1513,7 @@ function MonitorDialog({ store, setStore, close, toast, t }: { store: Store; set
     <Modal
       title={t("monitor")}
       close={close}
-      footer={<><button onClick={close}>{t("close")}</button><button onClick={stop}>{t("stopMonitor")}</button><button className="primary" onClick={start}>{t("saveStart")}</button></>}
+      footer={<><button onClick={close}>{t("close")}</button><button onClick={stop}>{t("stopMonitor")}</button><button className="primary" onClick={start}>{t("monitor")}</button></>}
     >
       <div className="monitor-grid">
         <section>
@@ -1474,6 +1555,7 @@ function SettingsDialog({
   store,
   profile,
   setStore,
+  beforeImport,
   onImported,
   close,
   save,
@@ -1483,6 +1565,7 @@ function SettingsDialog({
   store: Store;
   profile: Profile;
   setStore: (s: Store) => void;
+  beforeImport: () => Promise<void>;
   onImported: (store: Store) => void;
   close: () => void;
   save: (s?: Store) => Promise<Store | null>;
@@ -1590,6 +1673,7 @@ function SettingsDialog({
 
   async function confirmImport() {
     if (!pendingImport) return;
+    await beforeImport();
     const imported = await invoke<Store>("import_profiles_yaml", { text: pendingImport.text });
     onImported(imported);
     setImportExportMessage(t("importSuccess"));
@@ -1601,7 +1685,7 @@ function SettingsDialog({
     <Modal
       title={t("settingsTitle")}
       close={close}
-      footer={<><button onClick={close}>{t("close")}</button><button className="primary" onClick={() => save(store).then(() => close())}>{t("saveSettings")}</button></>}
+      footer={<button onClick={close}>{t("close")}</button>}
     >
       <div className="settings-layout">
         <div className="settings-menu">
