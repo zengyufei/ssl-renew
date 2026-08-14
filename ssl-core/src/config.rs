@@ -452,12 +452,12 @@ pub fn normalize_store(store: &mut Store) {
     }
     for profile in store.profiles.values_mut() {
         if profile.paths.cert_file.is_empty() || profile.paths.key_file.is_empty() {
-            let certificate_name = certificate_filename(&profile.domain);
+            let safe = safe_domain_filename(&profile.domain);
             if profile.paths.cert_file.is_empty() {
-                profile.paths.cert_file = format!("D:/cert/{certificate_name}.pem");
+                profile.paths.cert_file = format!("D:/cert/{safe}.pem");
             }
             if profile.paths.key_file.is_empty() {
-                profile.paths.key_file = format!("D:/cert/{certificate_name}.key");
+                profile.paths.key_file = format!("D:/cert/{safe}.key");
             }
         }
     }
@@ -478,15 +478,15 @@ pub fn normalize_store(store: &mut Store) {
 }
 
 pub fn default_profile(domain: &str) -> Profile {
-    let certificate_name = certificate_filename(domain);
+    let safe = safe_domain_filename(domain);
     let root = domain.strip_prefix("*.").unwrap_or(domain);
     Profile {
         domain: domain.to_string(),
         email: format!("admin@{root}"),
         renew: default_renew(),
         paths: PathsConfig {
-            cert_file: format!("D:/cert/{certificate_name}.pem"),
-            key_file: format!("D:/cert/{certificate_name}.key"),
+            cert_file: format!("D:/cert/{safe}.pem"),
+            key_file: format!("D:/cert/{safe}.key"),
             ..Default::default()
         },
         dns: Default::default(),
@@ -733,15 +733,12 @@ fn default_notification_settings() -> NotificationSettings {
 }
 
 pub fn safe_domain_filename(domain: &str) -> String {
+    let domain = domain.trim();
     domain
-        .trim()
-        .replace("*.", "wildcard.")
-        .replace('*', "wildcard")
+        .strip_prefix("*.")
+        .unwrap_or(domain)
+        .replace('*', "")
         .replace(['/', '\\'], "_")
-}
-
-fn certificate_filename(domain: &str) -> String {
-    safe_domain_filename(domain.trim().strip_prefix("*.").unwrap_or(domain))
 }
 
 pub fn state_dir_for(profile: &Profile) -> PathBuf {
@@ -855,7 +852,7 @@ mod tests {
 
     #[test]
     fn safe_domain_matches_python_style() {
-        assert_eq!(safe_domain_filename("*.h5por.com"), "wildcard.h5por.com");
+        assert_eq!(safe_domain_filename("*.h5por.com"), "h5por.com");
     }
 
     #[test]
