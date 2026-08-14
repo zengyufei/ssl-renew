@@ -95,7 +95,7 @@ const providerOptions = [
   ["cloudflare", "Cloudflare"],
   ["signer", "签发程序"]
 ];
-const appVersion = "0.1.0";
+const appVersion = "1.0.1";
 const defaultSettings: AppSettings = {
   theme: "light",
   language: "zh",

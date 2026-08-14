@@ -4,11 +4,14 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-14
+
 ### Added
 
 - Environment variable groups with stable IDs, user-defined names, and arbitrary alias-to-environment-variable mappings.
 - GUI support for adding, renaming, deleting, and selecting environment variable groups per domain profile.
 - Execution preflight that reports configured variable names and whether they are set, without exposing values.
+- Certificate profile actions can open their certificate and private-key folders directly from the GUI.
 
 ### Changed
 
