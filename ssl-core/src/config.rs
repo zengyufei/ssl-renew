@@ -456,12 +456,12 @@ pub fn normalize_store(store: &mut Store) {
     }
     for profile in store.profiles.values_mut() {
         if profile.paths.cert_file.is_empty() || profile.paths.key_file.is_empty() {
-            let safe = safe_domain_filename(&profile.domain);
+            let certificate_name = certificate_filename(&profile.domain);
             if profile.paths.cert_file.is_empty() {
-                profile.paths.cert_file = format!("D:/cert/{safe}.pem");
+                profile.paths.cert_file = format!("D:/cert/{certificate_name}.pem");
             }
             if profile.paths.key_file.is_empty() {
-                profile.paths.key_file = format!("D:/cert/{safe}.key");
+                profile.paths.key_file = format!("D:/cert/{certificate_name}.key");
             }
         }
     }
@@ -482,15 +482,15 @@ pub fn normalize_store(store: &mut Store) {
 }
 
 pub fn default_profile(domain: &str) -> Profile {
-    let safe = safe_domain_filename(domain);
+    let certificate_name = certificate_filename(domain);
     let root = domain.strip_prefix("*.").unwrap_or(domain);
     Profile {
         domain: domain.to_string(),
         email: format!("admin@{root}"),
         renew: default_renew(),
         paths: PathsConfig {
-            cert_file: format!("D:/cert/{safe}.pem"),
-            key_file: format!("D:/cert/{safe}.key"),
+            cert_file: format!("D:/cert/{certificate_name}.pem"),
+            key_file: format!("D:/cert/{certificate_name}.key"),
             ..Default::default()
         },
         dns: Default::default(),
@@ -745,6 +745,10 @@ pub fn safe_domain_filename(domain: &str) -> String {
         .unwrap_or(domain)
         .replace('*', "")
         .replace(['/', '\\'], "_")
+}
+
+fn certificate_filename(domain: &str) -> String {
+    safe_domain_filename(domain.trim().strip_prefix("*.").unwrap_or(domain))
 }
 
 pub fn state_dir_for(profile: &Profile) -> PathBuf {
