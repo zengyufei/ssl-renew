@@ -508,7 +508,8 @@ export default function App() {
   const [profileSearch, setProfileSearch] = useState("");
   const [step, setStep] = useState(0);
   const [logs, setLogs] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
+  const runningDomainsRef = useRef<Set<string>>(new Set());
+  const [runningDomains, setRunningDomains] = useState<Set<string>>(() => new Set());
   const [showVendor, setShowVendor] = useState(false);
   const [showMonitor, setShowMonitor] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -525,6 +526,7 @@ export default function App() {
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const storeVersionRef = useRef(0);
   const profile = current && store ? store.profiles[current] : null;
+  const busy = runningDomains.has(profile?.domain.trim() || current);
   const settings = { ...defaultSettings, ...(store?.app_settings ?? {}) };
   settings.toast = { ...defaultSettings.toast, ...(store?.app_settings?.toast ?? {}) };
   settings.notification = {
@@ -736,6 +738,22 @@ export default function App() {
     }
   }
 
+  function beginProfileRun(domain: string) {
+    if (runningDomainsRef.current.has(domain)) return false;
+    const next = new Set(runningDomainsRef.current);
+    next.add(domain);
+    runningDomainsRef.current = next;
+    setRunningDomains(next);
+    return true;
+  }
+
+  function endProfileRun(domain: string) {
+    const next = new Set(runningDomainsRef.current);
+    next.delete(domain);
+    runningDomainsRef.current = next;
+    setRunningDomains(next);
+  }
+
   function normalizeStoreForSave(source: Store, preferredCurrent: string): Store {
     const next = clone(source);
     const profiles: Record<string, Profile> = {};
@@ -865,10 +883,11 @@ export default function App() {
 
   async function runStep(index: number) {
     if (!profile) return;
-    setBusy(true);
+    const runDomain = profile.domain.trim() || current;
+    if (!beginProfileRun(runDomain)) return;
     try {
       const saved = await save();
-      const domain = saved?.current_domain ?? current;
+      const domain = saved?.current_domain ?? runDomain;
       await executeStep(index, domain, false, saved);
       logStepFooter(index, true);
       toast(`${localizedSteps[index]}执行成功`, "success");
@@ -879,16 +898,17 @@ export default function App() {
       logStepFooter(index, false, `失败原因：${String(error)}`);
       toast(`执行失败：${String(error)}`, "error");
     } finally {
-      setBusy(false);
+      endProfileRun(runDomain);
     }
   }
 
   async function runAllSteps() {
     if (!profile) return;
-    setBusy(true);
+    const runDomain = profile.domain.trim() || current;
+    if (!beginProfileRun(runDomain)) return;
     try {
       const saved = await save();
-      const domain = saved?.current_domain ?? current;
+      const domain = saved?.current_domain ?? runDomain;
       setStep(0);
       const status = await executeStep(0, domain, true, saved);
       logStepFooter(0, true);
@@ -914,7 +934,7 @@ export default function App() {
       ]);
       toast(`一键运行失败：${String(error)}`, "error");
     } finally {
-      setBusy(false);
+      endProfileRun(runDomain);
     }
   }
 
