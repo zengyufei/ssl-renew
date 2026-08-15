@@ -419,6 +419,10 @@ main {
   font-size: 13px;
 }
 
+.env-status.temporary-input .env-status-row {
+  grid-template-columns: minmax(90px, 1fr) minmax(130px, 1.4fr) minmax(160px, 1.4fr) auto;
+}
+
 .env-status-row .ok {
   color: #15803d;
 }

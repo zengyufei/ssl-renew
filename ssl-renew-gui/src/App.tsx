@@ -170,6 +170,11 @@ const i18n = {
     environmentGroupStatus: "环境变量检查",
     environmentVariablePresent: "已设置",
     environmentVariableMissing: "未设置",
+    temporaryEnvironmentInput: "临时填入",
+    useEnvironmentVariables: "使用环境变量",
+    environmentVariableValue: "临时值",
+    environmentVariableValuePlaceholder: "输入实际值",
+    sessionEnvironmentSaveFailed: "保存临时环境变量失败",
     useSigner: "使用签发程序代请求厂商",
     signerPipe: "签发程序 Pipe",
     signerTitle: "签发程序管理",
@@ -343,6 +348,11 @@ const i18n = {
     environmentGroupStatus: "Environment variable check",
     environmentVariablePresent: "Set",
     environmentVariableMissing: "Missing",
+    temporaryEnvironmentInput: "Temporary input",
+    useEnvironmentVariables: "Use environment variables",
+    environmentVariableValue: "Temporary value",
+    environmentVariableValuePlaceholder: "Enter actual value",
+    sessionEnvironmentSaveFailed: "Failed to save temporary environment variable",
     useSigner: "Use signer agent for DNS provider requests",
     signerPipe: "Signer Pipe",
     signerTitle: "Signer Agent",
@@ -521,10 +531,14 @@ export default function App() {
   const [dnsChallenges, setDnsChallenges] = useState<Record<string, DnsChallenge[]>>({});
   const [envGroupStatus, setEnvGroupStatus] = useState<EnvironmentGroupStatus | null>(null);
   const [envGroupStatusError, setEnvGroupStatusError] = useState("");
+  const [sessionEnvironmentValues, setSessionEnvironmentValues] = useState<Record<string, string>>({});
+  const [temporaryEnvironmentInput, setTemporaryEnvironmentInput] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const sessionEnvironmentUpdateQueueRef = useRef<Promise<void>>(Promise.resolve());
   const storeVersionRef = useRef(0);
+  const sessionEnvironmentValuesRef = useRef<Record<string, string>>({});
   const profile = current && store ? store.profiles[current] : null;
   const busy = runningDomains.has(profile?.domain.trim() || current);
   const settings = { ...defaultSettings, ...(store?.app_settings ?? {}) };
@@ -791,6 +805,40 @@ export default function App() {
     autoSave(next, current);
   }
 
+  function updateSessionEnvironmentValue(envName: string, value: string) {
+    const nextValues = { ...sessionEnvironmentValuesRef.current };
+    if (value) {
+      nextValues[envName] = value;
+    } else {
+      delete nextValues[envName];
+    }
+    sessionEnvironmentValuesRef.current = nextValues;
+    setSessionEnvironmentValues(nextValues);
+    const pending = sessionEnvironmentUpdateQueueRef.current
+      .then(() => invoke<boolean>("set_session_environment_value_cmd", { envName, value }));
+    sessionEnvironmentUpdateQueueRef.current = pending
+      .then((isSet) => {
+        setEnvGroupStatus((status) => status && {
+          ...status,
+          variables: status.variables.map((variable) => (
+            variable.env_name === envName ? { ...variable, is_set: isSet } : variable
+          ))
+        });
+      })
+      .catch((error) => {
+        const message = `${t("sessionEnvironmentSaveFailed")}：${String(error)}`;
+        appendLog(message);
+        toast(message, "error");
+      });
+  }
+
+  function clearSessionEnvironmentValues(envNames: string[]) {
+    const names = new Set(envNames);
+    Object.keys(sessionEnvironmentValuesRef.current)
+      .filter((envName) => names.has(envName))
+      .forEach((envName) => updateSessionEnvironmentValue(envName, ""));
+  }
+
   function addProfile(domain: string) {
     if (!store || !profile) return;
     const trimmed = domain.trim();
@@ -886,6 +934,7 @@ export default function App() {
     const runDomain = profile.domain.trim() || current;
     if (!beginProfileRun(runDomain)) return;
     try {
+      await sessionEnvironmentUpdateQueueRef.current;
       const saved = await save();
       const domain = saved?.current_domain ?? runDomain;
       await executeStep(index, domain, false, saved);
@@ -907,6 +956,7 @@ export default function App() {
     const runDomain = profile.domain.trim() || current;
     if (!beginProfileRun(runDomain)) return;
     try {
+      await sessionEnvironmentUpdateQueueRef.current;
       const saved = await save();
       const domain = saved?.current_domain ?? runDomain;
       setStep(0);
@@ -1013,7 +1063,7 @@ export default function App() {
         <section className="panel">
           <h1>{step + 1}. {localizedSteps[step]}</h1>
           {step === 0 && <CheckStep profile={profile} update={updateProfile} openFolder={openPathFolder} t={t} />}
-          {step === 1 && <OrderStep profile={profile} envGroups={store.env_groups} envGroupStatus={envGroupStatus} envGroupStatusError={envGroupStatusError} update={updateProfile} t={t} />}
+          {step === 1 && <OrderStep profile={profile} envGroups={store.env_groups} envGroupStatus={envGroupStatus} envGroupStatusError={envGroupStatusError} temporaryEnvironmentInput={temporaryEnvironmentInput} setTemporaryEnvironmentInput={setTemporaryEnvironmentInput} clearSessionEnvironmentValues={clearSessionEnvironmentValues} sessionEnvironmentValues={sessionEnvironmentValues} updateSessionEnvironmentValue={updateSessionEnvironmentValue} update={updateProfile} t={t} />}
           {step === 2 && <DnsCheckStep challenges={dnsChallenges[current] ?? []} copy={copyText} t={t} />}
           {step === 3 && <IssueStep profile={profile} update={updateProfile} openFolder={openPathFolder} t={t} />}
           {step === 4 && <RestartStep profile={profile} update={updateProfile} t={t} />}
@@ -1039,7 +1089,7 @@ export default function App() {
         />
       )}
       {showVendor && <VendorDialog store={store} setStore={autoSave} close={() => setShowVendor(false)} t={t} />}
-      {showMonitor && <MonitorDialog store={store} setStore={autoSave} close={() => setShowMonitor(false)} save={save} toast={toast} t={t} />}
+      {showMonitor && <MonitorDialog store={store} setStore={autoSave} close={() => setShowMonitor(false)} beforeStart={() => sessionEnvironmentUpdateQueueRef.current} save={save} toast={toast} t={t} />}
       {showSettings && (
         <SettingsDialog
           store={store}
@@ -1072,6 +1122,11 @@ function OrderStep({
   envGroups,
   envGroupStatus,
   envGroupStatusError,
+  temporaryEnvironmentInput,
+  setTemporaryEnvironmentInput,
+  clearSessionEnvironmentValues,
+  sessionEnvironmentValues,
+  updateSessionEnvironmentValue,
   update,
   t
 }: {
@@ -1079,47 +1134,87 @@ function OrderStep({
   envGroups: Record<string, EnvironmentGroup>;
   envGroupStatus: EnvironmentGroupStatus | null;
   envGroupStatusError: string;
+  temporaryEnvironmentInput: boolean;
+  setTemporaryEnvironmentInput: (value: boolean) => void;
+  clearSessionEnvironmentValues: (envNames: string[]) => void;
+  sessionEnvironmentValues: Record<string, string>;
+  updateSessionEnvironmentValue: (envName: string, value: string) => void;
   update: (mutator: (profile: Profile) => void) => void;
   t: (key: I18nKey) => string;
 }) {
   const signerEnabled = profile.dns.provider === "signer";
   const signerPipe = profile.dns.signer?.pipe_name || "\\\\.\\pipe\\ssl-renew-signer";
+  const showEnvironmentCheck = profile.dns.provider !== "manual" && Boolean(profile.dns.env_group_id);
+  const environmentVariableNames = envGroupStatus?.variables.map((variable) => variable.env_name) ?? [];
+  function changeTemporaryEnvironmentInput(enabled: boolean) {
+    if (!enabled && temporaryEnvironmentInput) {
+      clearSessionEnvironmentValues(environmentVariableNames);
+    }
+    setTemporaryEnvironmentInput(enabled);
+  }
+
   return (
     <div className="form">
       <Field label={t("email")} value={profile.email} onChange={(v) => update((p) => (p.email = v))} />
       <label>{t("dnsProvider")}</label>
-      <select value={profile.dns.provider} onChange={(e) => update((p) => (p.dns.provider = e.target.value))}>
+      <select value={profile.dns.provider} onChange={(event) => {
+        changeTemporaryEnvironmentInput(false);
+        update((p) => (p.dns.provider = event.target.value));
+      }}>
         {providerOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select>
       <label>{t("environmentGroup")}</label>
       <select
         value={profile.dns.env_group_id ?? ""}
-        onChange={(event) => update((p) => {
-          p.dns.env_group_id = event.target.value || undefined;
-        })}
+        onChange={(event) => {
+          changeTemporaryEnvironmentInput(false);
+          update((p) => {
+            p.dns.env_group_id = event.target.value || undefined;
+          });
+        }}
       >
         <option value="">{t("noEnvironmentGroup")}</option>
         {Object.entries(envGroups).map(([id, group]) => <option key={id} value={id}>{group.name}</option>)}
       </select>
-      {profile.dns.env_group_id && (
-        <div className="env-status" aria-live="polite">
+      {showEnvironmentCheck && (
+        <div className={`env-status ${temporaryEnvironmentInput ? "temporary-input" : ""}`} aria-live="polite">
           <strong>{t("environmentGroupStatus")}</strong>
+          <Switch
+            checked={temporaryEnvironmentInput}
+            onChange={changeTemporaryEnvironmentInput}
+            enabledLabel={t("temporaryEnvironmentInput")}
+            disabledLabel={t("useEnvironmentVariables")}
+            t={t}
+          />
           {envGroupStatusError && <p className="env-status-error">{envGroupStatusError}</p>}
           {!envGroupStatusError && envGroupStatus?.variables.length === 0 && <p className="empty">{t("emptyEnvironmentGroup")}</p>}
           {!envGroupStatusError && envGroupStatus?.variables.map((variable) => (
             <div className="env-status-row" key={`${variable.alias}-${variable.env_name}`}>
               <span>{variable.alias}</span>
               <code>{variable.env_name}</code>
+              {temporaryEnvironmentInput && (
+                <input
+                  aria-label={`${t("environmentVariableValue")} ${variable.alias}`}
+                  autoComplete="off"
+                  placeholder={t("environmentVariableValuePlaceholder")}
+                  type="password"
+                  value={sessionEnvironmentValues[variable.env_name] ?? ""}
+                  onChange={(event) => updateSessionEnvironmentValue(variable.env_name, event.target.value)}
+                />
+              )}
               <span className={variable.is_set ? "ok" : "missing"}>{variable.is_set ? t("environmentVariablePresent") : t("environmentVariableMissing")}</span>
             </div>
           ))}
         </div>
       )}
       <label>{t("useSigner")}</label>
-      <Switch checked={signerEnabled} onChange={(checked) => update((p) => {
-        p.dns.provider = checked ? "signer" : "manual";
-        if (!p.dns.signer) p.dns.signer = { pipe_name: "\\\\.\\pipe\\ssl-renew-signer" };
-      })} t={t} />
+      <Switch checked={signerEnabled} onChange={(checked) => {
+        changeTemporaryEnvironmentInput(false);
+        update((p) => {
+          p.dns.provider = checked ? "signer" : "manual";
+          if (!p.dns.signer) p.dns.signer = { pipe_name: "\\\\.\\pipe\\ssl-renew-signer" };
+        });
+      }} t={t} />
       {signerEnabled && (
         <>
           <Field label={t("signerPipe")} value={signerPipe} onChange={(value) => update((p) => {
@@ -1224,11 +1319,11 @@ function Field({ label, value, onChange, type = "text", onOpenFolder, openFolder
   );
 }
 
-function Switch({ checked, onChange, t }: { checked: boolean; onChange: (value: boolean) => void; t: (key: I18nKey) => string }) {
+function Switch({ checked, onChange, enabledLabel, disabledLabel, t }: { checked: boolean; onChange: (value: boolean) => void; enabledLabel?: string; disabledLabel?: string; t: (key: I18nKey) => string }) {
   return (
     <button type="button" className={`switch ${checked ? "on" : ""}`} onClick={() => onChange(!checked)}>
       <span />
-      <strong>{checked ? t("enabled") : t("disabled")}</strong>
+      <strong>{checked ? enabledLabel ?? t("enabled") : disabledLabel ?? t("disabled")}</strong>
     </button>
   );
 }
@@ -1550,7 +1645,7 @@ function SignerUnlockPanel({ toast, t }: { toast: (message: string, kind?: Toast
   );
 }
 
-function MonitorDialog({ store, setStore, close, save, toast, t }: { store: Store; setStore: (s: Store) => void; close: () => void; save: (s?: Store) => Promise<Store | null>; toast: (message: string, kind?: Toast["kind"]) => void; t: (key: I18nKey) => string }) {
+function MonitorDialog({ store, setStore, close, beforeStart, save, toast, t }: { store: Store; setStore: (s: Store) => void; close: () => void; beforeStart: () => Promise<void>; save: (s?: Store) => Promise<Store | null>; toast: (message: string, kind?: Toast["kind"]) => void; t: (key: I18nKey) => string }) {
   const monitor = store.monitor;
   function update(mutator: (monitor: MonitorConfig) => void) {
     const next = clone(store);
@@ -1558,6 +1653,7 @@ function MonitorDialog({ store, setStore, close, save, toast, t }: { store: Stor
     setStore(next);
   }
   async function start() {
+    await beforeStart();
     await save(store);
     await invoke("start_monitor_cmd");
     toast("监控已启动", "success");
