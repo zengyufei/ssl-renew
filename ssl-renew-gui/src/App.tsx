@@ -138,6 +138,8 @@ const i18n = {
     loading: "加载中...",
     loadFailed: "加载配置失败",
     profiles: "域名配置",
+    searchProfiles: "搜索域名...",
+    noMatchingProfiles: "未找到匹配的域名配置",
     addProfile: "新增配置",
     deleteProfile: "删除配置",
     vendorConfig: "环境变量",
@@ -309,6 +311,8 @@ const i18n = {
     loading: "Loading...",
     loadFailed: "Failed to load config",
     profiles: "Domain Profiles",
+    searchProfiles: "Search domains...",
+    noMatchingProfiles: "No matching domain profiles",
     addProfile: "Add Profile",
     deleteProfile: "Delete Profile",
     vendorConfig: "Environment Variables",
@@ -501,6 +505,7 @@ function defaultCertificatePath(prefix: string, filename: string, extension: "pe
 export default function App() {
   const [store, setStore] = useState<Store | null>(null);
   const [current, setCurrent] = useState("");
+  const [profileSearch, setProfileSearch] = useState("");
   const [step, setStep] = useState(0);
   const [logs, setLogs] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -914,6 +919,10 @@ export default function App() {
   }
 
   const domains = useMemo(() => Object.keys(store?.profiles ?? {}), [store]);
+  const filteredDomains = useMemo(() => {
+    const query = profileSearch.trim().toLowerCase();
+    return query ? domains.filter((domain) => domain.toLowerCase().includes(query)) : domains;
+  }, [domains, profileSearch]);
   if (loadError) {
     return <div className="app loading">{t("loadFailed")}：{loadError}</div>;
   }
@@ -925,12 +934,24 @@ export default function App() {
     <div className={`app theme-${settings.theme === "dark" ? "dark" : "light"}`}>
       <aside>
         <h2>{t("profiles")}</h2>
+        <input
+          className="profile-search"
+          type="search"
+          value={profileSearch}
+          onChange={(event) => setProfileSearch(event.target.value)}
+          placeholder={t("searchProfiles")}
+          aria-label={t("searchProfiles")}
+        />
         <div className="profile-list">
-          {domains.map((domain) => (
-            <button key={domain} className={domain === current ? "active" : ""} onClick={() => setCurrent(domain)}>
-              {domain}
-            </button>
-          ))}
+          {filteredDomains.length === 0 ? (
+            <p className="profile-search-empty">{t("noMatchingProfiles")}</p>
+          ) : (
+            filteredDomains.map((domain) => (
+              <button key={domain} className={domain === current ? "active" : ""} onClick={() => setCurrent(domain)}>
+                {domain}
+              </button>
+            ))
+          )}
         </div>
         <div className="side-actions">
           <button onClick={() => setShowAddProfile(true)}>{t("addProfile")}</button>
