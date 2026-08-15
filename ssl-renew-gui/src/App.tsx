@@ -490,7 +490,7 @@ function clone<T>(value: T): T {
 }
 
 function safeDomainFilename(domain: string): string {
-  return domain.trim().replace(/^\*\./, "wildcard.").replace(/\*/g, "wildcard").replace(/[\\/]/g, "_");
+  return domain.trim().replace(/^\*\./, "").replace(/\*/g, "").replace(/[\\/]/g, "_");
 }
 
 function defaultEmail(domain: string): string {
