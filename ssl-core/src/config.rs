@@ -190,6 +190,10 @@ pub struct AppSettings {
     pub theme: String,
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default = "default_cert_pem_path_prefix")]
+    pub cert_pem_path_prefix: String,
+    #[serde(default = "default_key_path_prefix")]
+    pub key_path_prefix: String,
     #[serde(default = "default_toast_settings")]
     pub toast: ToastSettings,
     #[serde(default = "default_notification_settings")]
@@ -708,6 +712,8 @@ pub fn default_app_settings() -> AppSettings {
     AppSettings {
         theme: default_theme(),
         language: default_language(),
+        cert_pem_path_prefix: default_cert_pem_path_prefix(),
+        key_path_prefix: default_key_path_prefix(),
         toast: default_toast_settings(),
         notification: default_notification_settings(),
     }
@@ -769,6 +775,12 @@ fn default_log_file() -> String {
 }
 fn default_backup_dir() -> String {
     "D:/cert/backup".to_string()
+}
+fn default_cert_pem_path_prefix() -> String {
+    "D:/cert".to_string()
+}
+fn default_key_path_prefix() -> String {
+    "D:/cert".to_string()
 }
 fn default_max_log_size_mb() -> f64 {
     10.0
