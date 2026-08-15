@@ -852,6 +852,9 @@ export default function App() {
       await executeStep(index, domain, false, saved);
       logStepFooter(index, true);
       toast(`${localizedSteps[index]}执行成功`, "success");
+      if (index < steps.length - 1) {
+        setStep(index + 1);
+      }
     } catch (error) {
       logStepFooter(index, false, `失败原因：${String(error)}`);
       toast(`执行失败：${String(error)}`, "error");
