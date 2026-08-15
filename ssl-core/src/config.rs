@@ -190,6 +190,10 @@ pub struct AppSettings {
     pub theme: String,
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default = "default_cert_pem_path_prefix")]
+    pub cert_pem_path_prefix: String,
+    #[serde(default = "default_key_path_prefix")]
+    pub key_path_prefix: String,
     #[serde(default = "default_toast_settings")]
     pub toast: ToastSettings,
     #[serde(default = "default_notification_settings")]
@@ -708,6 +712,8 @@ pub fn default_app_settings() -> AppSettings {
     AppSettings {
         theme: default_theme(),
         language: default_language(),
+        cert_pem_path_prefix: default_cert_pem_path_prefix(),
+        key_path_prefix: default_key_path_prefix(),
         toast: default_toast_settings(),
         notification: default_notification_settings(),
     }
@@ -733,10 +739,11 @@ fn default_notification_settings() -> NotificationSettings {
 }
 
 pub fn safe_domain_filename(domain: &str) -> String {
+    let domain = domain.trim();
     domain
-        .trim()
-        .replace("*.", "wildcard.")
-        .replace('*', "wildcard")
+        .strip_prefix("*.")
+        .unwrap_or(domain)
+        .replace('*', "")
         .replace(['/', '\\'], "_")
 }
 
@@ -768,6 +775,12 @@ fn default_log_file() -> String {
 }
 fn default_backup_dir() -> String {
     "D:/cert/backup".to_string()
+}
+fn default_cert_pem_path_prefix() -> String {
+    "D:/cert".to_string()
+}
+fn default_key_path_prefix() -> String {
+    "D:/cert".to_string()
 }
 fn default_max_log_size_mb() -> f64 {
     10.0
@@ -851,7 +864,7 @@ mod tests {
 
     #[test]
     fn safe_domain_matches_python_style() {
-        assert_eq!(safe_domain_filename("*.h5por.com"), "wildcard.h5por.com");
+        assert_eq!(safe_domain_filename("*.h5por.com"), "h5por.com");
     }
 
     #[test]
@@ -1066,6 +1079,7 @@ monitor:
         let profile = default_profile("*.example.com");
         assert_eq!(profile.domain, "*.example.com");
         assert_eq!(profile.email, "admin@example.com");
-        assert!(profile.paths.cert_file.contains("wildcard.example.com"));
+        assert_eq!(profile.paths.cert_file, "D:/cert/example.com.pem");
+        assert_eq!(profile.paths.key_file, "D:/cert/example.com.key");
     }
 }

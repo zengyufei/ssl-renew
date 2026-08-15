@@ -41,6 +41,8 @@ type NotificationScope = {
 type AppSettings = {
   theme: "light" | "dark" | string;
   language: "zh" | "en" | string;
+  cert_pem_path_prefix: string;
+  key_path_prefix: string;
   toast: {
     enabled: boolean;
     position: string;
@@ -99,6 +101,8 @@ const appVersion = "1.0.1";
 const defaultSettings: AppSettings = {
   theme: "light",
   language: "zh",
+  cert_pem_path_prefix: "D:/cert",
+  key_path_prefix: "D:/cert",
   toast: { enabled: true, position: "top-right", duration_ms: 3200 },
   notification: {
     enabled: false,
@@ -136,7 +140,7 @@ const i18n = {
     profiles: "域名配置",
     addProfile: "新增配置",
     deleteProfile: "删除配置",
-    vendorConfig: "环境变量配置",
+    vendorConfig: "环境变量",
     signerProgram: "签发程序",
     monitor: "启动监控",
     openGithub: "打开项目仓库",
@@ -229,6 +233,9 @@ const i18n = {
     stopMonitor: "停止监控",
     saveStart: "保存并启动",
     settingsTitle: "设置",
+    defaults: "默认值",
+    certPemPathPrefix: "证书 PEM 路径前缀",
+    keyPathPrefix: "私钥 KEY 路径前缀",
     theme: "主题",
     toast: "Toast",
     language: "语言",
@@ -397,6 +404,9 @@ const i18n = {
     stopMonitor: "Stop Monitor",
     saveStart: "Save and Start",
     settingsTitle: "Settings",
+    defaults: "Defaults",
+    certPemPathPrefix: "Certificate PEM Path Prefix",
+    keyPathPrefix: "Private Key Path Prefix",
     theme: "Theme",
     toast: "Toast",
     language: "Language",
@@ -481,6 +491,11 @@ function safeDomainFilename(domain: string): string {
 
 function defaultEmail(domain: string): string {
   return `admin@${domain.trim().replace(/^\*\./, "")}`;
+}
+
+function defaultCertificatePath(prefix: string, filename: string, extension: "pem" | "key") {
+  const directory = prefix.trim().replace(/[\\/]+$/, "") || "D:/cert";
+  return `${directory}/${filename}.${extension}`;
 }
 
 export default function App() {
@@ -771,8 +786,8 @@ export default function App() {
     newProfile.email = defaultEmail(trimmed);
     newProfile.renew.force = false;
     newProfile.dns.provider = "manual";
-    newProfile.paths.cert_file = `D:/cert/${safe}.pem`;
-    newProfile.paths.key_file = `D:/cert/${safe}.key`;
+    newProfile.paths.cert_file = defaultCertificatePath(settings.cert_pem_path_prefix, safe, "pem");
+    newProfile.paths.key_file = defaultCertificatePath(settings.key_path_prefix, safe, "key");
     next.profiles[trimmed] = newProfile;
     next.current_domain = trimmed;
     autoSave(next, trimmed);
@@ -1575,7 +1590,7 @@ function SettingsDialog({
   toast: (message: string, kind?: Toast["kind"]) => void;
   t: (key: I18nKey) => string;
 }) {
-  const [active, setActive] = useState<"theme" | "toast" | "notification" | "signer" | "signerUnlock" | "language" | "logs" | "importExport" | "about">("theme");
+  const [active, setActive] = useState<"defaults" | "theme" | "toast" | "notification" | "signer" | "signerUnlock" | "language" | "logs" | "importExport" | "about">("theme");
   const [pendingImport, setPendingImport] = useState<{ name: string; text: string } | null>(null);
   const [importExportMessage, setImportExportMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1623,6 +1638,7 @@ function SettingsDialog({
   }
 
   const menus: Array<[typeof active, I18nKey]> = [
+    ["defaults", "defaults"],
     ["theme", "theme"],
     ["toast", "toast"],
     ["notification", "notification"],
@@ -1699,6 +1715,12 @@ function SettingsDialog({
           ))}
         </div>
         <div className="settings-panel">
+          {active === "defaults" && (
+            <div className="settings-section form">
+              <Field label={t("certPemPathPrefix")} value={settings.cert_pem_path_prefix} onChange={(value) => updateStore((next) => (next.app_settings.cert_pem_path_prefix = value))} />
+              <Field label={t("keyPathPrefix")} value={settings.key_path_prefix} onChange={(value) => updateStore((next) => (next.app_settings.key_path_prefix = value))} />
+            </div>
+          )}
           {active === "theme" && (
             <div className="settings-section">
               <h3>{t("theme")}</h3>
