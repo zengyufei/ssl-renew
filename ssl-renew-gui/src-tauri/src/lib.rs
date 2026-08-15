@@ -10,6 +10,7 @@ use ssl_core::signer::{
 };
 use ssl_core::workflow;
 use ssl_core::DnsProviderKind;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -20,6 +21,11 @@ use tokio::sync::watch;
 #[derive(Clone)]
 struct MonitorControl {
     stop: Arc<Mutex<Option<watch::Sender<bool>>>>,
+}
+
+#[derive(Clone, Default)]
+struct SessionEnvironment {
+    original_values: Arc<Mutex<HashMap<String, Option<String>>>>,
 }
 
 #[tauri::command]
@@ -142,6 +148,41 @@ async fn create_order_cmd(domain: String) -> Result<Value, String> {
         .await
         .map_err(|err| err.to_string())?;
     serde_json::to_value(runtime.session.challenges).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn set_session_environment_value_cmd(
+    session_environment: State<'_, SessionEnvironment>,
+    env_name: String,
+    value: String,
+) -> Result<bool, String> {
+    let env_name = env_name.trim();
+    if env_name.is_empty() {
+        return Err("环境变量名称不能为空".to_string());
+    }
+
+    let mut original_values = session_environment
+        .original_values
+        .lock()
+        .map_err(|_| "临时环境变量状态锁失败".to_string())?;
+    if value.is_empty() {
+        let original_value = original_values.remove(env_name).flatten();
+        drop(original_values);
+        match original_value {
+            Some(original_value) => std::env::set_var(env_name, original_value),
+            None => std::env::remove_var(env_name),
+        }
+    } else {
+        original_values
+            .entry(env_name.to_string())
+            .or_insert_with(|| std::env::var(env_name).ok());
+        drop(original_values);
+        std::env::set_var(env_name, value);
+    }
+
+    Ok(std::env::var(env_name)
+        .map(|current_value| !current_value.is_empty())
+        .unwrap_or(false))
 }
 
 #[tauri::command]
@@ -358,6 +399,7 @@ pub fn run() {
         .manage(MonitorControl {
             stop: Arc::new(Mutex::new(None)),
         })
+        .manage(SessionEnvironment::default())
         .invoke_handler(tauri::generate_handler![
             load_profiles,
             save_profiles,
@@ -372,6 +414,7 @@ pub fn run() {
             signer_authorize_test_cmd,
             check_certificate_cmd,
             create_order_cmd,
+            set_session_environment_value_cmd,
             environment_group_status_cmd,
             dns_check_cmd,
             issue_cmd,
