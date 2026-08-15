@@ -83,6 +83,12 @@ aside h2 {
   line-height: 1.3;
 }
 
+.profile-search {
+  width: 100%;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+
 main {
   flex: 1;
   min-width: 0;
@@ -127,6 +133,13 @@ main {
   color: #fff;
   background: #1f6feb;
   border-color: #1f6feb;
+}
+
+.profile-search-empty {
+  margin: 8px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .side-actions {
@@ -1072,7 +1085,8 @@ code {
 .app.theme-dark .empty,
 .app.theme-dark .about-panel p,
 .app.theme-dark .about-panel dt,
-.app.theme-dark .settings-hint {
+.app.theme-dark .settings-hint,
+.app.theme-dark .profile-search-empty {
   color: #b6c2d4;
 }
 
